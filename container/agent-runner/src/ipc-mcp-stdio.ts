@@ -86,11 +86,19 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
 \u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
   {
-    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
+    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here. For pipeline tasks, this is the overall description.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    pipeline_steps: z.array(z.object({
+      name: z.string().describe('Short name for this step (e.g., "reddit-discover", "deduplicate")'),
+      prompt: z.string().describe('What the agent should do. Use {prev_results} for all prior outputs or {step_N_output} for specific step output.'),
+      skipIf: z.string().optional().describe('JS expression evaluated against `results` string. Step is skipped if truthy. E.g., "results.trim() === \'[]\'"'),
+      timeout: z.number().optional().describe('Override default container timeout for this step (ms)'),
+      context_mode: z.enum(['group', 'isolated']).optional().describe('Override task-level context mode for this step'),
+      parallel_group: z.string().optional().describe('Steps with same parallel_group run concurrently. Leave empty for sequential execution.'),
+    })).optional().describe('Pipeline steps for multi-step tasks. Steps run sequentially by default, or concurrently when sharing a parallel_group. Prior step outputs are available via template variables.'),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -124,7 +132,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     // Non-main groups can only schedule for themselves
     const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
 
-    const data = {
+    const data: Record<string, unknown> = {
       type: 'schedule_task',
       prompt: args.prompt,
       schedule_type: args.schedule_type,
@@ -134,6 +142,10 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
     };
+
+    if (args.pipeline_steps) {
+      data.pipeline_steps = args.pipeline_steps;
+    }
 
     const filename = writeIpcFile(TASKS_DIR, data);
 

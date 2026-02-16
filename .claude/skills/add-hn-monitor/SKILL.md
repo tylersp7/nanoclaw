@@ -492,25 +492,29 @@ Test from WhatsApp:
 ### Monthly "Who's Hiring" Alert
 
 ```
-@Andy on the first weekday of every month, check the HackerNews Who's Hiring thread. Search for jobs mentioning n8n, automation, API, security, or remote work. Score each 1-10 and send me the top 10 matches with direct links.
+@Andy on the first weekday of every month, check the HackerNews Who's Hiring thread. Search for jobs mentioning n8n, automation, API, security, or remote work. Score each 1-10 and send me the top 10 matches with direct links. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://news.ycombinator.com/item?id=...", "source": "hackernews", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Daily "Ask HN" Monitor
 
 ```
-@Andy every day at 10am, check HackerNews for Ask HN posts from the past 24 hours about automation, workflows, self-hosting, or API integration. If any match my expertise, send me the post with a draft response I can use to build credibility.
+@Andy every day at 10am, check HackerNews for Ask HN posts from the past 24 hours about automation, workflows, self-hosting, or API integration. If any match my expertise, send me the post with a draft response I can use to build credibility. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://news.ycombinator.com/item?id=...", "source": "hackernews", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Weekly "Show HN" Opportunities
 
 ```
-@Andy every Monday at 9am, check HackerNews Show HN posts from the past week about new automation tools, workflow platforms, or API services. Send me interesting ones where I could offer integration consulting or become an early adopter.
+@Andy every Monday at 9am, check HackerNews Show HN posts from the past week about new automation tools, workflow platforms, or API services. Send me interesting ones where I could offer integration consulting or become an early adopter. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://news.ycombinator.com/item?id=...", "source": "hackernews", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Real-time Job Alerts (First Few Days of Month)
 
 ```
-@Andy on the 1st through 5th of each month, check the Who's Hiring thread every 4 hours for new high-score jobs (8+/10). Alert me immediately so I can apply early before the thread gets crowded.
+@Andy on the 1st through 5th of each month, check the Who's Hiring thread every 4 hours for new high-score jobs (8+/10). Alert me immediately so I can apply early before the thread gets crowded. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://news.ycombinator.com/item?id=...", "source": "hackernews", "score": 9, "summary": "..."}</signal>
 ```
 
 ---

@@ -502,19 +502,22 @@ Test from WhatsApp:
 ### Job Board Monitor (Every 2 hours)
 
 ```
-@Andy every 2 hours, check r/forhire, r/freelance_forhire, and r/jobbit for posts mentioning n8n, automation, API, security, VPS, or workflow. Score each post 1-10 for fit. Only send me posts scored 7+, with a draft response for each.
+@Andy every 2 hours, check r/forhire, r/freelance_forhire, and r/jobbit for posts mentioning n8n, automation, API, security, VPS, or workflow. Score each post 1-10 for fit. Only send me posts scored 7+, with a draft response for each. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://reddit.com/...", "source": "reddit", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Community Engagement (Daily)
 
 ```
-@Andy every day at 9am, check r/n8n, r/selfhosted, and r/sysadmin for new posts from the past 24 hours where someone is asking for help. Filter for problems I can solve (automation, VPS, API work). Send me 3-5 best opportunities to build credibility by helping.
+@Andy every day at 9am, check r/n8n, r/selfhosted, and r/sysadmin for new posts from the past 24 hours where someone is asking for help. Filter for problems I can solve (automation, VPS, API work). Send me 3-5 best opportunities to build credibility by helping. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://reddit.com/...", "source": "reddit", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Weekly Opportunity Summary
 
 ```
-@Andy every Sunday at 6pm, analyze all freelance job postings from Reddit this week. Tell me: total opportunities found, top 5 by relevance score, most common skill requests, average budget ranges (if mentioned), and whether I should adjust my monitoring keywords.
+@Andy every Sunday at 6pm, analyze all freelance job postings from Reddit this week. Tell me: total opportunities found, top 5 by relevance score, most common skill requests, average budget ranges (if mentioned), and whether I should adjust my monitoring keywords. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://reddit.com/...", "source": "reddit", "score": 8, "summary": "..."}</signal>
 ```
 
 ---

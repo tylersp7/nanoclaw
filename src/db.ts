@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import { FollowUpEntry, NewMessage, PipelineRunLogEntry, PipelineState, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
 let db: Database.Database;
 
@@ -96,6 +96,59 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add pipeline columns to scheduled_tasks (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN pipeline_steps TEXT DEFAULT NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN pipeline_state TEXT DEFAULT NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Pipeline run logs
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS pipeline_run_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      step_index INTEGER NOT NULL,
+      step_name TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      duration_ms INTEGER,
+      status TEXT NOT NULL,
+      input_summary TEXT,
+      output_summary TEXT,
+      error TEXT,
+      FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pipeline_run_logs ON pipeline_run_logs(task_id, run_id);
+  `);
+
+  // Follow-up queue
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS follow_up_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_task_id TEXT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      signal TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      context TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      processed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_follow_up_status ON follow_up_queue(status);
+  `);
 
   // Notification dedup: prevent duplicate messages from scheduled tasks
   database.exec(`
@@ -315,8 +368,8 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, pipeline_steps)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -329,6 +382,7 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.pipeline_steps || null,
   );
 }
 
@@ -560,6 +614,82 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Pipeline state ---
+
+export function updatePipelineState(taskId: string, state: PipelineState): void {
+  db.prepare(
+    `UPDATE scheduled_tasks SET pipeline_state = ? WHERE id = ?`,
+  ).run(JSON.stringify(state), taskId);
+}
+
+export function getPipelineState(taskId: string): PipelineState | null {
+  const row = db.prepare(
+    `SELECT pipeline_state FROM scheduled_tasks WHERE id = ?`,
+  ).get(taskId) as { pipeline_state: string | null } | undefined;
+  if (!row?.pipeline_state) return null;
+  return JSON.parse(row.pipeline_state);
+}
+
+export function logPipelineStep(entry: PipelineRunLogEntry): void {
+  db.prepare(
+    `INSERT INTO pipeline_run_logs (task_id, run_id, step_index, step_name, started_at, completed_at, duration_ms, status, input_summary, output_summary, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    entry.task_id,
+    entry.run_id,
+    entry.step_index,
+    entry.step_name,
+    entry.started_at,
+    entry.completed_at || null,
+    entry.duration_ms || null,
+    entry.status,
+    entry.input_summary || null,
+    entry.output_summary || null,
+    entry.error || null,
+  );
+}
+
+// --- Follow-up queue ---
+
+export function queueFollowUp(entry: FollowUpEntry): void {
+  db.prepare(
+    `INSERT INTO follow_up_queue (source_task_id, group_folder, chat_jid, signal, prompt, context, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+  ).run(
+    entry.source_task_id || null,
+    entry.group_folder,
+    entry.chat_jid,
+    entry.signal,
+    entry.prompt,
+    entry.context || null,
+    entry.created_at,
+  );
+}
+
+export function getPendingFollowUps(): FollowUpEntry[] {
+  return db.prepare(
+    `SELECT * FROM follow_up_queue WHERE status = 'pending' ORDER BY created_at`,
+  ).all() as FollowUpEntry[];
+}
+
+export function markFollowUpProcessing(id: number): void {
+  db.prepare(
+    `UPDATE follow_up_queue SET status = 'processing' WHERE id = ?`,
+  ).run(id);
+}
+
+export function markFollowUpCompleted(id: number): void {
+  db.prepare(
+    `UPDATE follow_up_queue SET status = 'completed', processed_at = ? WHERE id = ?`,
+  ).run(new Date().toISOString(), id);
+}
+
+export function markFollowUpError(id: number, error: string): void {
+  db.prepare(
+    `UPDATE follow_up_queue SET status = 'error', processed_at = ?, context = COALESCE(context, '') || ? WHERE id = ?`,
+  ).run(new Date().toISOString(), `\nError: ${error}`, id);
 }
 
 // --- Notification dedup ---

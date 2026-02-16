@@ -4,24 +4,35 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  CONTAINER_POOL_ENABLED,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
+  NOTIFICATION_BATCH_MAX,
+  NOTIFICATION_BATCH_WINDOW,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
+import { getContainerPool } from './container-pool.js';
 import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import {
   getAllTasks,
   getDueTasks,
+  getPendingFollowUps,
   getTaskById,
   isNotificationDuplicate,
   logNotification,
   logTaskRun,
+  markFollowUpCompleted,
+  markFollowUpError,
+  markFollowUpProcessing,
   updateTaskAfterRun,
 } from './db.js';
+import { detectAndQueueFollowUps } from './follow-up-detector.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
+import { NotificationBatcher } from './notification-batcher.js';
+import { runPipeline } from './pipeline-runner.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
@@ -36,6 +47,22 @@ async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
 ): Promise<void> {
+  // Pipeline tasks delegate to the pipeline runner
+  if (task.pipeline_steps) {
+    await runPipeline(task, deps);
+    // Compute next_run after pipeline completes
+    let nextRun: string | null = null;
+    if (task.schedule_type === 'cron') {
+      const interval = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE });
+      nextRun = interval.next().toISOString();
+    } else if (task.schedule_type === 'interval') {
+      const ms = parseInt(task.schedule_value, 10);
+      nextRun = new Date(Date.now() + ms).toISOString();
+    }
+    updateTaskAfterRun(task.id, nextRun, 'Pipeline completed');
+    return;
+  }
+
   const startTime = Date.now();
   const groupDir = path.join(GROUPS_DIR, task.group_folder);
   fs.mkdirSync(groupDir, { recursive: true });
@@ -131,6 +158,8 @@ async function runTask(
               await deps.sendMessage(task.chat_jid, text);
             }
           }
+          // Scan for follow-up signals in output
+          detectAndQueueFollowUps(streamedOutput.result, task);
           // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
         }
@@ -191,6 +220,12 @@ async function runTask(
 }
 
 let schedulerRunning = false;
+let batcher: NotificationBatcher | null = null;
+
+/** Flush all pending batched notifications (call on shutdown). */
+export async function flushNotifications(): Promise<void> {
+  if (batcher) await batcher.flushAll();
+}
 
 export function startSchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
@@ -198,6 +233,20 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     return;
   }
   schedulerRunning = true;
+
+  // Wrap sendMessage with a batcher so scheduled-task notifications
+  // arriving close together for the same chat are merged into one message.
+  batcher = new NotificationBatcher(deps.sendMessage, {
+    windowMs: NOTIFICATION_BATCH_WINDOW,
+    maxMessages: NOTIFICATION_BATCH_MAX,
+    separator: '\n\n---\n\n',
+  });
+
+  const batchedDeps: SchedulerDependencies = {
+    ...deps,
+    sendMessage: async (jid, text) => batcher!.send(jid, text),
+  };
+
   logger.info('Scheduler loop started');
 
   const loop = async () => {
@@ -214,14 +263,66 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
-        deps.queue.enqueueTask(
+        batchedDeps.queue.enqueueTask(
           currentTask.chat_jid,
           currentTask.id,
-          () => runTask(currentTask, deps),
+          () => runTask(currentTask, batchedDeps),
+        );
+      }
+
+      // Process pending follow-ups
+      const followUps = getPendingFollowUps();
+      for (const followUp of followUps) {
+        markFollowUpProcessing(followUp.id!);
+        const followUpId = `followup-${followUp.id}-${Date.now()}`;
+
+        batchedDeps.queue.enqueueTask(
+          followUp.chat_jid,
+          followUpId,
+          async () => {
+            try {
+              // Run follow-up as a one-off task
+              await runTask(
+                {
+                  id: followUpId,
+                  group_folder: followUp.group_folder,
+                  chat_jid: followUp.chat_jid,
+                  prompt: followUp.prompt,
+                  schedule_type: 'once',
+                  schedule_value: new Date().toISOString(),
+                  context_mode: 'isolated',
+                  next_run: null,
+                  last_run: null,
+                  last_result: null,
+                  status: 'completed',
+                  created_at: followUp.created_at,
+                },
+                batchedDeps,
+              );
+              markFollowUpCompleted(followUp.id!);
+            } catch (err) {
+              const errorMsg = err instanceof Error ? err.message : String(err);
+              markFollowUpError(followUp.id!, errorMsg);
+              logger.error({ followUpId: followUp.id, err }, 'Follow-up failed');
+            }
+          },
         );
       }
     } catch (err) {
       logger.error({ err }, 'Error in scheduler loop');
+    }
+
+    // Pre-warm container setup for known groups during idle periods
+    if (CONTAINER_POOL_ENABLED) {
+      try {
+        const groups = deps.registeredGroups();
+        const groupFolders = Object.values(groups).map((g) => g.folder);
+        if (groupFolders.length > 0) {
+          getContainerPool().warmup(groupFolders);
+        }
+      } catch (err) {
+        logger.debug({ err }, 'Container pool warmup failed (non-critical)');
+      }
     }
 
     setTimeout(loop, SCHEDULER_POLL_INTERVAL);

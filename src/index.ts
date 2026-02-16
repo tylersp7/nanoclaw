@@ -36,7 +36,7 @@ import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
 import { formatMessages, formatOutbound } from './router.js';
 import { startRelayServer } from './ssh-relay.js';
-import { startSchedulerLoop } from './task-scheduler.js';
+import { flushNotifications, startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -460,6 +460,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    await flushNotifications();
     await queue.shutdown(10000);
     await whatsapp.disconnect();
     process.exit(0);

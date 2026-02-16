@@ -65,6 +65,68 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  pipeline_steps?: string | null;  // JSON string of PipelineStep[]
+  pipeline_state?: string | null;  // JSON string of PipelineState
+}
+
+// Pipeline step definition (stored as JSON in scheduled_tasks.pipeline_steps)
+export interface PipelineStep {
+  name: string;
+  prompt: string;
+  skipIf?: string;        // Expression evaluated against prior output
+  timeout?: number;       // Override CONTAINER_TIMEOUT for this step
+  context_mode?: 'group' | 'isolated';
+  parallel_group?: string; // Steps with same parallel_group run concurrently
+}
+
+// Pipeline execution state (stored as JSON in scheduled_tasks.pipeline_state)
+export interface PipelineState {
+  run_id: string;
+  current_step: number;
+  completed_steps: number[];
+  step_outputs: Record<number, string>;  // step index → output text
+  started_at: string;
+  status: 'running' | 'completed' | 'error' | 'paused';
+  error?: string;
+}
+
+// Follow-up signal types
+export type FollowUpSignal = 'LEAD_FOUND' | 'ACTION_NEEDED' | 'AUTO_REMEDIATE' | 'ESCALATE';
+
+// Follow-up action definition
+export interface FollowUpAction {
+  signal: FollowUpSignal;
+  pattern: RegExp;
+  buildPrompt: (match: RegExpMatchArray, fullOutput: string) => string;
+}
+
+// Pipeline run log entry
+export interface PipelineRunLogEntry {
+  task_id: string;
+  run_id: string;
+  step_index: number;
+  step_name: string;
+  started_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+  status: 'running' | 'success' | 'error' | 'skipped';
+  input_summary?: string;
+  output_summary?: string;
+  error?: string;
+}
+
+// Follow-up queue entry
+export interface FollowUpEntry {
+  id?: number;
+  source_task_id?: string;
+  group_folder: string;
+  chat_jid: string;
+  signal: string;
+  prompt: string;
+  context?: string;
+  status?: string;
+  created_at: string;
+  processed_at?: string;
 }
 
 export interface TaskRunLog {

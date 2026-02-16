@@ -17,6 +17,10 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `src/config.ts` | Trigger pattern, paths, intervals |
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
+| `src/pipeline-runner.ts` | Multi-step pipeline execution engine |
+| `src/follow-up-detector.ts` | Scans agent output for signals, queues follow-ups |
+| `src/notification-batcher.ts` | Batches scheduled task notifications per chat |
+| `src/container-pool.ts` | Caches mount setup, skills sync, IPC dirs for faster container spawns |
 | `src/db.ts` | SQLite operations |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
@@ -35,14 +39,20 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/add-hn-monitor` | ✅ **NEW** Monitor HackerNews "Who's Hiring" and Ask HN posts |
 | `/add-github-monitor` | ✅ **NEW** Track repo activity, find consulting in GitHub issues |
 | `/add-n8n-monitor` | ✅ **NEW** Build reputation in n8n community, find consulting opportunities |
+| `/add-job-board-scraper` | ✅ **NEW** Monitor Upwork, Fiverr, Freelancer for automation/n8n projects |
+| `/add-proposal-generator` | ✅ **NEW** AI-powered proposal generation from templates for qualified leads |
+| `/add-lead-pipeline` | ✅ **NEW** Unified lead pipeline: chains all monitors → dedup → qualify → notify |
+| `/add-vps-health-pipeline` | ✅ **NEW** Automated VPS health: Slack alerts → SSH investigate → auto-remediate → report |
+| `/add-client-followup` | ✅ **NEW** Automated follow-ups: CRM monitoring, draft follow-up messages, deadline reminders |
+| `/add-portfolio-pipeline` | ✅ **NEW** Portfolio auto-update: GitHub activity → highlights → portfolio files → LinkedIn draft |
 
 **Lead Generation & Freelance:**
 - `LEAD_GEN_QUICK_START.md` - Complete 30-day freelance launch plan
 - `PROPOSED_SKILLS.md` - 13 total skills for freelance success
 - `SKILLS_PROGRESS.md` - Implementation progress (5/13 complete)
 
-**Completed:** 5 lead generation skills ready to use!
-**Next:** LinkedIn monitor, job board scraper, calendar integration
+**Completed:** 10 lead generation skills ready to use!
+**Next:** LinkedIn monitor, calendar integration
 
 ## Development
 

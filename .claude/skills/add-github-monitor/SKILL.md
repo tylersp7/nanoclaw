@@ -692,25 +692,29 @@ Test from WhatsApp:
 ### Weekly Repo Activity Report
 
 ```
-@Andy every Monday at 9am, check GitHub activity on tylersp7/vps_bugbounty and tylersp7/auto_blogger_vps for the past week. Report: new stars/forks, commits, issues opened, and any milestones reached.
+@Andy every Monday at 9am, check GitHub activity on tylersp7/vps_bugbounty and tylersp7/auto_blogger_vps for the past week. Report: new stars/forks, commits, issues opened, and any milestones reached. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://github.com/...", "source": "github", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Daily Help Wanted Issues
 
 ```
-@Andy every day at 10am, search GitHub for help wanted issues in n8n, automation, and workflow repos. Score each for fit. Send me top 5 issues (score 7+) where I can contribute and potentially get consulting work.
+@Andy every day at 10am, search GitHub for help wanted issues in n8n, automation, and workflow repos. Score each for fit. Send me top 5 issues (score 7+) where I can contribute and potentially get consulting work. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://github.com/...", "source": "github", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Monthly Portfolio Update
 
 ```
-@Andy on the last day of every month, generate a portfolio summary for vps_bugbounty and auto_blogger_vps. Include: commits this month, features added, issues resolved. Draft a LinkedIn post about the work.
+@Andy on the last day of every month, generate a portfolio summary for vps_bugbounty and auto_blogger_vps. Include: commits this month, features added, issues resolved. Draft a LinkedIn post about the work. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://github.com/...", "source": "github", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Milestone Celebrations
 
 ```
-@Andy check my GitHub repos daily for milestones (10, 25, 50, 100 stars/forks). When reached, alert me and suggest posting about it on LinkedIn for visibility.
+@Andy check my GitHub repos daily for milestones (10, 25, 50, 100 stars/forks). When reached, alert me and suggest posting about it on LinkedIn for visibility. For any milestone that represents a consulting opportunity scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://github.com/...", "source": "github", "score": 8, "summary": "..."}</signal>
 ```
 
 ---

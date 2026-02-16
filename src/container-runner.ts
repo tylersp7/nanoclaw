@@ -10,11 +10,13 @@ import path from 'path';
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
+  CONTAINER_POOL_ENABLED,
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
 } from './config.js';
+import { getContainerPool, syncSkillsIfNeeded } from './container-pool.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -65,6 +67,7 @@ function buildVolumeMounts(
   const mounts: VolumeMount[] = [];
   const homeDir = getHomeDir();
   const projectRoot = process.cwd();
+  const pool = CONTAINER_POOL_ENABLED ? getContainerPool() : null;
 
   if (isMain) {
     // Main gets the entire project root mounted
@@ -108,40 +111,48 @@ function buildVolumeMounts(
     group.folder,
     '.claude',
   );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(settingsFile, JSON.stringify({
-      env: {
-        // Enable agent swarms (subagent orchestration)
-        // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-        // Load CLAUDE.md from additional mounted directories
-        // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-        // Enable Claude's memory feature (persists user preferences between sessions)
-        // https://code.claude.com/docs/en/memory#manage-auto-memory
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-      },
-    }, null, 2) + '\n');
+
+  // Pool: ensure settings.json exists (skips if already cached)
+  if (pool) {
+    pool.ensureSettings(groupSessionsDir, group.folder);
+  } else {
+    fs.mkdirSync(groupSessionsDir, { recursive: true });
+    const settingsFile = path.join(groupSessionsDir, 'settings.json');
+    if (!fs.existsSync(settingsFile)) {
+      fs.writeFileSync(settingsFile, JSON.stringify({
+        env: {
+          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        },
+      }, null, 2) + '\n');
+    }
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.mkdirSync(dstDir, { recursive: true });
-      for (const file of fs.readdirSync(srcDir)) {
-        const srcFile = path.join(srcDir, file);
-        const dstFile = path.join(dstDir, file);
-        fs.copyFileSync(srcFile, dstFile);
+  // Pool: sync skills with checksum comparison (skips copy when unchanged)
+  if (pool) {
+    const checksum = pool.getSkillsChecksum();
+    if (checksum && !pool.areSkillsSynced(group.folder)) {
+      syncSkillsIfNeeded(groupSessionsDir, undefined, checksum);
+      pool.markSkillsSynced(group.folder, checksum);
+    }
+  } else {
+    // Fallback: always sync (original behavior)
+    const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+    const skillsDst = path.join(groupSessionsDir, 'skills');
+    if (fs.existsSync(skillsSrc)) {
+      for (const skillDir of fs.readdirSync(skillsSrc)) {
+        const srcDir = path.join(skillsSrc, skillDir);
+        if (!fs.statSync(srcDir).isDirectory()) continue;
+        const dstDir = path.join(skillsDst, skillDir);
+        fs.mkdirSync(dstDir, { recursive: true });
+        for (const file of fs.readdirSync(srcDir)) {
+          fs.copyFileSync(path.join(srcDir, file), path.join(dstDir, file));
+        }
       }
     }
   }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -150,10 +161,16 @@ function buildVolumeMounts(
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
+  // Pool: pre-creates dirs and caches the result (skips on subsequent calls)
+  if (pool) {
+    pool.ensureIpcDirs(group.folder);
+  } else {
+    const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
+    fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
+    fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+    fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  }
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -187,10 +204,14 @@ function buildVolumeMounts(
     filteredLines.push(`SSH_RELAY_SECRET=${getRelaySecret()}`);
 
     if (filteredLines.length > 0) {
-      fs.writeFileSync(
-        path.join(envDir, 'env'),
-        filteredLines.join('\n') + '\n',
-      );
+      const envContent = filteredLines.join('\n') + '\n';
+
+      // Pool: skip write if env content hasn't changed
+      if (!pool || !pool.isEnvCurrent(group.folder, envContent)) {
+        fs.writeFileSync(path.join(envDir, 'env'), envContent);
+        if (pool) pool.markEnvWritten(group.folder, envContent);
+      }
+
       mounts.push({
         hostPath: envDir,
         containerPath: '/workspace/env-dir',
@@ -198,7 +219,6 @@ function buildVolumeMounts(
       });
     }
   }
-
 
   // Mount agent-runner source from host — recompiled on container startup.
   // Bypasses Apple Container's sticky build cache for code changes.

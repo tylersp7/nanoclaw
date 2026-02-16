@@ -5,548 +5,193 @@ description: Monitor Upwork, Fiverr, and Freelancer for automation/n8n projects.
 
 # Add Job Board Scraper
 
-This skill monitors major freelance platforms (Upwork, Fiverr, Freelancer) for automation and n8n projects. High volume of leads, automated filtering by budget/client rating.
+This skill adds automated job board monitoring for Upwork, Fiverr, and Freelancer. It uses RSS feeds and public APIs to find automation/n8n projects, score them for relevance, and alert you to high-quality leads.
 
 ## What It Monitors
 
 **Upwork:**
-- API Integration jobs
-- n8n workflow automation
-- VPS/server setup
-- Security/bug bounty work
-- Filter by: budget, client rating, payment verified
+- RSS feeds for job searches (no login required)
+- Filter by: keywords, budget, recency
+- Best source for quality clients
 
 **Fiverr:**
-- Request posts (buyers looking for help)
-- New gigs in automation category
-- Trending searches
+- Search results for buyer requests
+- Gig marketplace for automation services
+- Note: Fiverr blocks most automated access; may require agent-browser for full results
 
 **Freelancer:**
-- Project listings
-- Contests (if interested)
+- Public API for active project listings
+- Budget and skill data available
+- High volume of automation projects
 
 ---
 
-## Installation
+## Setup Steps
 
-### 1. Install Dependencies
-
-```bash
-cd /Users/tyler/dev/nanoclaw
-npm install rss-parser cheerio axios
-```
-
-### 2. Upwork RSS Setup
-
-Upwork provides RSS feeds for job searches!
+### Step 1: Ask Which Platforms to Monitor
 
 **USER ACTION REQUIRED**
 
 Tell the user:
 
-> Upwork has RSS feeds for job searches. Let's set up your custom feeds:
+> I'll set up job board monitoring for freelance platforms. Which platforms do you want to monitor?
 >
-> 1. Go to https://www.upwork.com/nx/find-work/
-> 2. Search for: "n8n automation"
-> 3. Apply filters: Remote, Hourly or Fixed Price
-> 4. Copy the URL from your browser
+> 1. **Upwork** - Best for quality clients, uses RSS feeds
+> 2. **Fiverr** - Buyer requests (may need browser automation)
+> 3. **Freelancer** - Public API, high volume
+> 4. **All platforms** (recommended)
 >
-> The URL will look like: https://www.upwork.com/nx/search/jobs/?q=n8n%20automation&...
->
-> To get the RSS feed, change the URL to:
-> https://www.upwork.com/ab/feed/jobs/rss?q=n8n%20automation&...
+> Default: All platforms
 
-### 3. Create RSS Feed List
+Wait for the user to respond. Store their choice.
 
-```bash
-cat > ~/.nanoclaw-job-boards/upwork-feeds.json << 'EOF'
-{
-  "feeds": [
-    {
-      "name": "n8n automation",
-      "url": "https://www.upwork.com/ab/feed/jobs/rss?q=n8n%20automation&sort=recency",
-      "keywords": ["n8n", "automation", "workflow"]
-    },
-    {
-      "name": "API integration",
-      "url": "https://www.upwork.com/ab/feed/jobs/rss?q=API%20integration&sort=recency",
-      "keywords": ["api", "integration", "webhook"]
-    },
-    {
-      "name": "VPS automation",
-      "url": "https://www.upwork.com/ab/feed/jobs/rss?q=VPS%20automation&sort=recency",
-      "keywords": ["vps", "server", "automation", "docker"]
-    }
-  ]
-}
-EOF
+### Step 2: Ask for Search Keywords
+
+Tell the user:
+
+> What keywords should I search for? Provide a comma-separated list.
+>
+> **Default keywords:** n8n, automation, workflow, zapier alternative, make.com alternative, API integration
+>
+> You can also add your own like: Python, VPS, Docker, security, webhook, scraping
+>
+> Just say "default" to use the defaults, or provide your custom list.
+
+Wait for the user to respond. Store their keywords.
+
+### Step 3: Ask for Budget Minimum
+
+Tell the user:
+
+> What's your minimum budget threshold? Jobs below this amount will be filtered out.
+>
+> - $100 (include everything)
+> - $200 (filter out micro-tasks)
+> - $500 (recommended - quality projects only)
+> - $1000 (premium projects only)
+> - Custom amount
+>
+> Default: $500
+
+Wait for the user to respond. Store the budget minimum.
+
+### Step 4: Configure Schedule
+
+Tell the user:
+
+> How often should I check for new jobs?
+>
+> - Every 1 hour (aggressive - best for early applications)
+> - Every 2 hours (recommended)
+> - Every 4 hours (moderate)
+> - Every 6 hours (light monitoring)
+> - Custom cron expression
+>
+> Default: Every 2 hours (`0 */2 * * *`)
+>
+> Tip: Applying early dramatically increases response rates. On Upwork, being in the first 5 applicants gives a 3x better response rate.
+
+Wait for the user to respond. Store the schedule.
+
+### Step 5: Create the Scheduled Task
+
+Based on the user's choices, create the scheduled task. Substitute their actual choices for the placeholders below.
+
+The scheduled task prompt should use the `job-board-scraper.sh` tool and emit `<signal type="LEAD_FOUND">` for high-scoring matches.
+
+**For "All platforms" (default):**
+
+```
+schedule_task({
+  prompt: "Job Board Scraper: Search all freelance platforms for new opportunities.\n\n## Instructions\n\n1. Run the job board scraper for all configured platforms:\n```bash\n/workspace/project/container/tools/job-board-scraper.sh all \"KEYWORDS\"\n```\n\nReplace KEYWORDS with: USER_KEYWORDS_HERE\n\n2. Parse the JSON output. Each job has: title, url, description, budget, budget_amount, platform, posted_date, match_score\n\n3. Filter results:\n   - Only include jobs with match_score >= 7\n   - Only include jobs with budget_amount >= MIN_BUDGET_HERE (or budget_amount == 0 meaning unspecified)\n   - Skip any jobs previously reported (check recent messages)\n\n4. For each qualifying job (score 7+), emit a signal:\n<signal type=\"LEAD_FOUND\">{\"title\": \"JOB_TITLE\", \"url\": \"JOB_URL\", \"source\": \"PLATFORM\", \"score\": MATCH_SCORE, \"budget\": \"BUDGET\", \"summary\": \"Brief description\"}</signal>\n\n5. Send a summary message with:\n   - Total jobs found across all platforms\n   - Number that passed filters\n   - Top matches with: title, platform, budget, score, URL\n   - For score 9+ jobs, note them as \"Apply ASAP - early applicants get 3x response rate\"\n\n6. If no jobs found matching criteria, do NOT send a message (skip silently).\n\nOutput format for pipeline compatibility:\n```json\n[{\"title\": \"...\", \"url\": \"...\", \"platform\": \"...\", \"budget\": \"...\", \"budget_amount\": 0, \"posted_date\": \"...\", \"match_score\": 0}]\n```",
+  schedule_type: "cron",
+  schedule_value: "CRON_EXPRESSION_HERE"
+})
 ```
 
----
+**For individual platforms**, use the same prompt but replace `all` with the specific platform (`upwork`, `fiverr`, or `freelancer`).
 
-### 4. Create Job Board Helper
+**Replace these placeholders:**
+- `USER_KEYWORDS_HERE` with the user's keywords from Step 2
+- `MIN_BUDGET_HERE` with the user's budget from Step 3
+- `CRON_EXPRESSION_HERE` with the cron expression from Step 4 (default: `0 */2 * * *`)
 
-```typescript
-// src/job-board-helper.ts
-import Parser from 'rss-parser';
-import axios from 'axios';
-import * as cheerio from 'cheerio';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+### Step 6: Update Group Memory
 
-const parser = new Parser();
-
-export interface JobListing {
-  id: string;
-  title: string;
-  description: string;
-  budget?: string;
-  budgetAmount?: number;
-  platform: 'upwork' | 'fiverr' | 'freelancer';
-  url: string;
-  postedAt: string;
-  client?: {
-    rating?: number;
-    verified?: boolean;
-    location?: string;
-  };
-  skills: string[];
-  relevanceScore?: number;
-}
-
-interface UpworkFeed {
-  name: string;
-  url: string;
-  keywords: string[];
-}
-
-/**
- * Load Upwork RSS feeds from config
- */
-function loadUpworkFeeds(): UpworkFeed[] {
-  const feedFile = path.join(os.homedir(), '.nanoclaw-job-boards', 'upwork-feeds.json');
-
-  if (!fs.existsSync(feedFile)) {
-    return [];
-  }
-
-  const config = JSON.parse(fs.readFileSync(feedFile, 'utf-8'));
-  return config.feeds || [];
-}
-
-/**
- * Parse Upwork RSS feed
- */
-export async function fetchUpworkJobs(feedUrl?: string): Promise<JobListing[]> {
-  const feeds = feedUrl ? [{ name: 'custom', url: feedUrl, keywords: [] }] : loadUpworkFeeds();
-
-  const allJobs: JobListing[] = [];
-
-  for (const feed of feeds) {
-    try {
-      const rssFeed = await parser.parseURL(feed.url);
-
-      for (const item of rssFeed.items) {
-        const $ = cheerio.load(item.content || '');
-
-        // Extract budget
-        const budgetText = $('b:contains("Budget")').parent().text() || '';
-        const budgetMatch = budgetText.match(/\$[\d,]+/);
-        const budget = budgetMatch ? budgetMatch[0] : undefined;
-        const budgetAmount = budget ? parseInt(budget.replace(/[$,]/g, '')) : undefined;
-
-        // Extract skills
-        const skillsText = $('b:contains("Skills")').parent().text() || '';
-        const skills = skillsText
-          .replace('Skills:', '')
-          .split(',')
-          .map(s => s.trim())
-          .filter(s => s.length > 0);
-
-        // Extract location
-        const location = $('b:contains("Country")').parent().text().replace('Country:', '').trim();
-
-        allJobs.push({
-          id: item.guid || item.link || '',
-          title: item.title || '',
-          description: item.contentSnippet || '',
-          budget,
-          budgetAmount,
-          platform: 'upwork',
-          url: item.link || '',
-          postedAt: item.pubDate || new Date().toISOString(),
-          client: {
-            location,
-          },
-          skills,
-        });
-      }
-    } catch (error) {
-      console.error(`Error fetching ${feed.name}:`, error);
-    }
-  }
-
-  return allJobs;
-}
-
-/**
- * Scrape Freelancer.com (uses public search)
- */
-export async function fetchFreelancerJobs(keywords: string): Promise<JobListing[]> {
-  try {
-    const url = `https://www.freelancer.com/jobs/${encodeURIComponent(keywords)}/`;
-
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-      },
-    });
-
-    const $ = cheerio.load(response.data);
-    const jobs: JobListing[] = [];
-
-    $('.JobSearchCard-item').each((i, el) => {
-      const $el = $(el);
-
-      const title = $el.find('.JobSearchCard-primary-heading-link').text().trim();
-      const description = $el.find('.JobSearchCard-primary-description').text().trim();
-      const url = 'https://www.freelancer.com' + $el.find('.JobSearchCard-primary-heading-link').attr('href');
-      const budget = $el.find('.JobSearchCard-secondary-price').text().trim();
-
-      const skillElements = $el.find('.JobSearchCard-secondary-entry--skills a');
-      const skills: string[] = [];
-      skillElements.each((i, skill) => {
-        skills.push($(skill).text().trim());
-      });
-
-      if (title) {
-        jobs.push({
-          id: url.split('/').pop() || '',
-          title,
-          description,
-          budget,
-          platform: 'freelancer',
-          url,
-          postedAt: new Date().toISOString(),
-          skills,
-        });
-      }
-    });
-
-    return jobs;
-  } catch (error) {
-    console.error('Error fetching Freelancer jobs:', error);
-    return [];
-  }
-}
-
-/**
- * Fetch Fiverr requests (buyer requests)
- */
-export async function fetchFiverrRequests(): Promise<JobListing[]> {
-  // Note: Fiverr buyer requests require login
-  // This is a placeholder for the structure
-  // Users would need to manually check or use browser automation
-
-  console.log('Fiverr requires authentication. Use browser to check buyer requests:');
-  console.log('https://www.fiverr.com/users/buyer_requests');
-
-  return [];
-}
-
-/**
- * Score a job for relevance
- */
-export function scoreJob(job: JobListing, userSkills: string[]): number {
-  let score = 5;
-
-  const text = `${job.title} ${job.description}`.toLowerCase();
-
-  // Check budget
-  if (job.budgetAmount) {
-    if (job.budgetAmount >= 1000) score += 3;
-    else if (job.budgetAmount >= 500) score += 2;
-    else if (job.budgetAmount >= 200) score += 1;
-    else if (job.budgetAmount < 50) score -= 2;
-  }
-
-  // Check for skill matches
-  const skillMatches = userSkills.filter(skill => {
-    const skillLower = skill.toLowerCase();
-    return text.includes(skillLower) || job.skills.some(s => s.toLowerCase().includes(skillLower));
-  }).length;
-
-  score += Math.min(skillMatches, 3);
-
-  // Check for high-value keywords
-  if (text.includes('automation') || text.includes('n8n')) score += 2;
-  if (text.includes('api') || text.includes('integration')) score += 1;
-  if (text.includes('vps') || text.includes('server')) score += 1;
-  if (text.includes('ongoing') || text.includes('long term')) score += 2;
-
-  // Check for red flags
-  if (text.includes('urgent') && job.budgetAmount && job.budgetAmount < 100) score -= 2;
-  if (text.includes('simple') || text.includes('quick task')) score -= 1;
-  if (text.includes('copy') || text.includes('data entry')) score -= 3;
-
-  return Math.max(1, Math.min(10, score));
-}
-
-/**
- * Filter jobs by minimum score
- */
-export function filterJobsByScore(
-  jobs: JobListing[],
-  userSkills: string[],
-  minScore: number = 7
-): Array<JobListing & { relevanceScore: number }> {
-  return jobs
-    .map(job => ({
-      ...job,
-      relevanceScore: scoreJob(job, userSkills),
-    }))
-    .filter(job => job.relevanceScore >= minScore)
-    .sort((a, b) => b.relevanceScore - a.relevanceScore);
-}
-
-/**
- * Check for duplicate jobs (seen before)
- */
-const seenJobIds = new Set<string>();
-
-export function filterNewJobs(jobs: JobListing[]): JobListing[] {
-  return jobs.filter(job => {
-    if (seenJobIds.has(job.id)) {
-      return false;
-    }
-    seenJobIds.add(job.id);
-    return true;
-  });
-}
-
-/**
- * Format jobs for WhatsApp
- */
-export function formatJobsForWhatsApp(
-  jobs: Array<JobListing & { relevanceScore?: number }>
-): string {
-  if (jobs.length === 0) return 'No jobs found.';
-
-  return jobs
-    .slice(0, 15)
-    .map((job, i) => {
-      const scoreStr = job.relevanceScore ? ` [Score: ${job.relevanceScore}/10]` : '';
-      const budget = job.budget ? ` 💰 ${job.budget}` : '';
-      const platform = {
-        upwork: '📘 Upwork',
-        fiverr: '🟢 Fiverr',
-        freelancer: '🔵 Freelancer',
-      }[job.platform];
-
-      const skills = job.skills.slice(0, 3).join(', ');
-
-      return `${i + 1}. *${job.title}*${scoreStr}${budget}
-${platform}${skills ? ` • ${skills}` : ''}
-
-${job.description.substring(0, 200)}${job.description.length > 200 ? '...' : ''}
-
-🔗 ${job.url}`;
-    })
-    .join('\n\n---\n\n');
-}
-
-/**
- * Get jobs since timestamp
- */
-export function getJobsSince(jobs: JobListing[], sinceTimestamp: number): JobListing[] {
-  return jobs.filter(job => {
-    const jobTime = new Date(job.postedAt).getTime();
-    return jobTime > sinceTimestamp;
-  });
-}
-```
-
-Save to `src/job-board-helper.ts`.
-
-### 5. Create CLI Tool
-
-```bash
-cat > /Users/tyler/dev/nanoclaw/container/tools/job-board-monitor.sh << 'EOF'
-#!/bin/bash
-# Job board monitoring tool
-
-NANOCLAW_DIR="/workspace/project"
-USER_SKILLS="n8n,automation,API,workflow,Python,JavaScript,VPS,Docker,security,integration,webhook"
-
-case "$1" in
-  upwork)
-    MIN_SCORE="${2:-7}"
-    node -e "
-    const { fetchUpworkJobs, filterJobsByScore, formatJobsForWhatsApp } = require('$NANOCLAW_DIR/dist/job-board-helper.js');
-    const skills = '$USER_SKILLS'.split(',');
-
-    fetchUpworkJobs().then(jobs => {
-      const scored = filterJobsByScore(jobs, skills, $MIN_SCORE);
-
-      if (scored.length === 0) {
-        console.log('No high-scoring Upwork jobs found.');
-      } else {
-        console.log(\`Found \${scored.length} Upwork jobs (score >= $MIN_SCORE/10):\\n\`);
-        console.log(formatJobsForWhatsApp(scored));
-      }
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  freelancer)
-    KEYWORDS="${2:-automation api}"
-    MIN_SCORE="${3:-7}"
-    node -e "
-    const { fetchFreelancerJobs, filterJobsByScore, formatJobsForWhatsApp } = require('$NANOCLAW_DIR/dist/job-board-helper.js');
-    const skills = '$USER_SKILLS'.split(',');
-
-    fetchFreelancerJobs('$KEYWORDS').then(jobs => {
-      const scored = filterJobsByScore(jobs, skills, $MIN_SCORE);
-
-      if (scored.length === 0) {
-        console.log('No high-scoring Freelancer jobs found.');
-      } else {
-        console.log(\`Found \${scored.length} Freelancer jobs (score >= $MIN_SCORE/10):\\n\`);
-        console.log(formatJobsForWhatsApp(scored));
-      }
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  all)
-    MIN_SCORE="${2:-7}"
-    node -e "
-    const { fetchUpworkJobs, fetchFreelancerJobs, filterJobsByScore, formatJobsForWhatsApp } = require('$NANOCLAW_DIR/dist/job-board-helper.js');
-    const skills = '$USER_SKILLS'.split(',');
-
-    Promise.all([
-      fetchUpworkJobs(),
-      fetchFreelancerJobs('automation api integration')
-    ]).then(([upworkJobs, freelancerJobs]) => {
-      const allJobs = [...upworkJobs, ...freelancerJobs];
-      const scored = filterJobsByScore(allJobs, skills, $MIN_SCORE);
-
-      if (scored.length === 0) {
-        console.log('No high-scoring jobs found on any platform.');
-      } else {
-        console.log(\`Found \${scored.length} jobs across all platforms (score >= $MIN_SCORE/10):\\n\`);
-        console.log(formatJobsForWhatsApp(scored));
-      }
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  *)
-    echo "Usage: job-board-monitor.sh <command> [args]"
-    echo ""
-    echo "Commands:"
-    echo "  upwork [min_score]              - Check Upwork (RSS)"
-    echo "  freelancer [keywords] [min_score] - Check Freelancer"
-    echo "  all [min_score]                 - Check all platforms"
-    echo ""
-    echo "Examples:"
-    echo "  job-board-monitor.sh upwork 8"
-    echo "  job-board-monitor.sh freelancer 'n8n automation' 7"
-    echo "  job-board-monitor.sh all 7"
-    ;;
-esac
-EOF
-
-chmod +x /Users/tyler/dev/nanoclaw/container/tools/job-board-monitor.sh
-```
-
-### 6. Update Group CLAUDE.md
-
-Add to `groups/main/CLAUDE.md`:
+Add to the group's CLAUDE.md:
 
 ```markdown
-## Job Board Monitoring
+## Job Board Scraping
 
-Monitor freelance platforms:
+Monitor freelance platforms for automation projects using `job-board-scraper.sh`:
 
-**Check Upwork:**
+**Search all platforms:**
 ```bash
-/workspace/project/container/tools/job-board-monitor.sh upwork 7
+/workspace/project/container/tools/job-board-scraper.sh all "n8n,automation,workflow"
 ```
 
-**Check Freelancer:**
+**Search specific platform:**
 ```bash
-/workspace/project/container/tools/job-board-monitor.sh freelancer "n8n automation" 7
+/workspace/project/container/tools/job-board-scraper.sh upwork "n8n,automation"
+/workspace/project/container/tools/job-board-scraper.sh freelancer "workflow,API integration"
+/workspace/project/container/tools/job-board-scraper.sh fiverr "automation"
 ```
 
-**Check all platforms:**
+**Set minimum budget:**
 ```bash
-/workspace/project/container/tools/job-board-monitor.sh all 7
-```
+MIN_BUDGET=1000 /workspace/project/container/tools/job-board-scraper.sh all "n8n,automation"
 ```
 
-### 7. Rebuild
+Output: JSON array of scored jobs. Use when user asks about freelance opportunities or job board monitoring.
 
-```bash
-cd /Users/tyler/dev/nanoclaw
-npm run build
-./container/build.sh
+**Keywords:** USER_KEYWORDS_CONFIGURED
+**Min budget:** $MIN_BUDGET_CONFIGURED
+**Schedule:** SCHEDULE_CONFIGURED
 ```
+
+Replace the placeholders with the user's actual configured values.
 
 ---
 
 ## Verification
 
-Test from terminal:
+After setup, test the scraper:
 
 ```bash
-cd /Users/tyler/dev/nanoclaw
-node -e "
-const { fetchUpworkJobs } = require('./dist/job-board-helper.js');
-fetchUpworkJobs().then(jobs => {
-  console.log('Found', jobs.length, 'Upwork jobs');
-  if (jobs.length > 0) console.log('First:', jobs[0].title);
-}).catch(err => console.error(err));
-"
+/workspace/project/container/tools/job-board-scraper.sh freelancer "automation,n8n"
 ```
 
-Test from WhatsApp:
+Check the output is valid JSON with scored results. If `jq` is not installed in the container, install it:
 
+```bash
+apt-get update && apt-get install -y jq
 ```
-@Andy check Upwork for n8n automation jobs
 
-@Andy search all job boards for API integration work
-
-@Andy what's new on Freelancer for automation projects?
-```
+Tell the user what you found and confirm the scheduled task is active.
 
 ---
 
 ## Scheduled Monitoring Tasks
 
-### Hourly Upwork Check (High Volume)
+### Primary Monitor (Every 2 Hours)
 
 ```
-@Andy every 2 hours, check Upwork for new jobs matching n8n, automation, API, or VPS. Score each 1-10. Alert me immediately about 9+/10 scores, and send daily digest of 8+ scores at 6pm.
-```
-
-### Daily Multi-Platform Sweep
-
-```
-@Andy every day at 10am, check Upwork, Freelancer, and Fiverr for automation/n8n projects. Filter for: budget $200+, score 7+. Send me top 20 matches sorted by score and budget.
+@Andy every 2 hours, search Upwork, Freelancer, and Fiverr for new jobs matching n8n, automation, API integration, and workflow. Score each 1-10. Only alert me for jobs scoring 7+ with budget $500+. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "...", "source": "upwork", "score": 8, "budget": "$1000", "summary": "..."}</signal>
 ```
 
 ### Early Bird Alert (Fresh Jobs)
 
 ```
-@Andy every morning at 7am, check all job boards for jobs posted in the last 12 hours. These are fresh opportunities with fewer applicants. Send me score 8+ matches immediately so I can apply first.
+@Andy every morning at 7am, check all job boards for jobs posted in the last 12 hours. These are fresh opportunities with fewer applicants. Send me score 8+ matches immediately. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "...", "source": "freelancer", "score": 9, "budget": "$2000", "summary": "..."}</signal>
 ```
 
-### Budget-Filtered Search
+### Weekly Platform Summary
 
 ```
-@Andy every 4 hours, check Upwork for jobs with budget $500+. Score them for fit. Alert me about high-budget opportunities (score 7+) even if they're slightly outside my normal keywords.
+@Andy every Sunday at 6pm, analyze all job board results from this week. Tell me: total opportunities found per platform, top 5 by score, most common skill requests, average budgets, and whether I should adjust keywords or budget filters. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "...", "source": "upwork", "score": 8, "budget": "$1500", "summary": "..."}</signal>
 ```
 
 ---
@@ -563,93 +208,48 @@ Test from WhatsApp:
 **Profile Optimization:**
 - Title: "n8n Automation Specialist | Workflow & API Integration Expert"
 - Overview: Mention VPS, automation, API integration
-- Portfolio: Add BeastMode, Auto Blogger as samples
-
-**Cover Letter Template:**
-```
-Hi [Client],
-
-I saw you need help with [specific thing from job]. I've built similar workflows using n8n and can deliver this within [timeframe].
-
-Relevant experience:
-- [Similar project or skill]
-- [Another relevant point]
-
-I'd be happy to discuss your requirements in detail. When's a good time for a quick call?
-
-Best,
-[Your name]
-
-Portfolio: [Link to work]
-```
-
-### Freelancer Tips
-
-- Less competition than Upwork
-- Bid strategically (not always lowest)
-- Build profile with smaller jobs first
-- Good for ongoing relationships
+- Portfolio: Add relevant project samples
 
 ### Budget Guidelines
 
-**Fair pricing:**
-- $500-1000 = Small automation project
-- $1000-2000 = Medium complexity workflow
-- $2000-5000 = Complex system integration
+**Fair pricing for automation work:**
+- $500-1000 = Small automation project (single workflow)
+- $1000-2000 = Medium complexity (multi-step, API integrations)
+- $2000-5000 = Complex system integration (multiple platforms)
 - $5000+ = Full automation infrastructure
 
-**Don't underbid:**
-- You'll attract difficult clients
-- Unsustainable long-term
-- Undervalues your skills
+### Platform Comparison
+
+| Platform | Volume | Quality | Budget Range | Competition |
+|----------|--------|---------|-------------|-------------|
+| Upwork | High | Best | $200-$10k+ | Medium |
+| Freelancer | High | Mixed | $100-$5k | High |
+| Fiverr | Medium | Lower | $50-$2k | Medium |
 
 ---
 
 ## Success Criteria
 
-✅ Upwork RSS feeds configured
-✅ Can fetch Upwork jobs
-✅ Can scrape Freelancer
-✅ Scoring system working
-✅ Budget filtering working
-✅ Scheduled monitoring active
-
----
-
-## Expected Results
-
-**Volume:**
-- 50-100 new jobs per day across platforms
-- 10-20 relevant after filtering (score 7+)
-- 3-5 excellent matches (score 8+)
-
-**Quality by Platform:**
-- Upwork: Best clients, good budgets
-- Freelancer: High volume, more competition
-- Fiverr: Lower budgets, quick gigs
-
-**Response Rates:**
-- Early applicants: 10-20% response
-- First 5 applicants: 20-30% response
-- After 20 applicants: 2-5% response
+- Can search each configured platform
+- Results include: title, url, description, budget, match_score
+- Scoring filters low-quality jobs
+- Budget filtering removes micro-tasks
+- Scheduled monitoring tasks running
+- Signal emissions for pipeline integration
 
 ---
 
 Tell the user:
 
-> Job board monitoring is ready! 🎉
+> Job board scraping is set up!
 >
-> Andy will now monitor:
-> - Upwork (RSS feeds - no login needed!)
-> - Freelancer (web scraping)
-> - Fiverr (manual check or browser automation)
+> I'm now monitoring [PLATFORMS] for:
+> **Keywords:** [KEYWORDS]
+> **Min budget:** $[BUDGET]
+> **Schedule:** [SCHEDULE]
 >
-> Combined with Reddit, HN, LinkedIn, n8n, and GitHub, you now have:
-> **7 lead sources running 24/7!**
+> The scraper checks for automation/n8n projects and scores each one 1-10 for fit. You'll only get notified about quality matches (score 7+).
 >
-> Expected weekly volume:
-> - 100-200 total opportunities
-> - 20-30 high-quality matches (7+)
-> - 5-10 excellent matches (8+)
+> Combined with your other monitors, you now have comprehensive lead coverage across freelance platforms, Reddit, HackerNews, and more.
 >
-> You pick the best and apply. Andy does the grunt work!
+> Want me to run a test search now to see what's available?

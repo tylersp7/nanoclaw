@@ -50,6 +50,14 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
 
+// Container pool: pre-warm mount setup to reduce spawn latency
+export const CONTAINER_POOL_ENABLED =
+  (process.env.CONTAINER_POOL_ENABLED ?? 'true') !== 'false';
+export const CONTAINER_POOL_SIZE = Math.max(
+  1,
+  parseInt(process.env.CONTAINER_POOL_SIZE || '2', 10) || 2,
+);
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -57,6 +65,17 @@ function escapeRegex(str: string): string {
 export const TRIGGER_PATTERN = new RegExp(
   `^@${escapeRegex(ASSISTANT_NAME)}\\b`,
   'i',
+);
+
+// Notification batching: hold outbound scheduled-task messages briefly
+// so multiple results arriving close together get merged into one message.
+export const NOTIFICATION_BATCH_WINDOW = parseInt(
+  process.env.NOTIFICATION_BATCH_WINDOW || '30000',
+  10,
+); // 30s default
+export const NOTIFICATION_BATCH_MAX = parseInt(
+  process.env.NOTIFICATION_BATCH_MAX || '5',
+  10,
 );
 
 // Timezone for scheduled tasks (cron expressions, etc.)

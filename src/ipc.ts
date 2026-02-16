@@ -162,6 +162,13 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    pipeline_steps?: Array<{
+      name: string;
+      prompt: string;
+      skipIf?: string;
+      timeout?: number;
+      context_mode?: 'group' | 'isolated';
+    }>;
     // For register_group
     jid?: string;
     name?: string;
@@ -261,6 +268,9 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
+          pipeline_steps: data.pipeline_steps
+            ? JSON.stringify(data.pipeline_steps)
+            : null,
         });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },

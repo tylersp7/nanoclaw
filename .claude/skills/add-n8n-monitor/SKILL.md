@@ -579,25 +579,29 @@ Test from WhatsApp:
 ### Daily Forum Check (Reputation Building)
 
 ```
-@Andy every day at 10am, check n8n forum for unanswered posts from the past 24 hours about VPS, Docker, self-hosting, API, or security. Score each 1-10 for my expertise. Send me top 3 (score 8+) with draft responses so I can help and build credibility.
+@Andy every day at 10am, check n8n forum for unanswered posts from the past 24 hours about VPS, Docker, self-hosting, API, or security. Score each 1-10 for my expertise. Send me top 3 (score 8+) with draft responses so I can help and build credibility. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://community.n8n.io/...", "source": "n8n", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Weekly GitHub Contribution Opportunities
 
 ```
-@Andy every Monday at 9am, check n8n GitHub for issues tagged "help wanted" or "good first issue" related to Docker, API, security, or Python. Send me top 5 where I could contribute and potentially get consulting work.
+@Andy every Monday at 9am, check n8n GitHub for issues tagged "help wanted" or "good first issue" related to Docker, API, security, or Python. Send me top 5 where I could contribute and potentially get consulting work. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://github.com/n8n-io/n8n/issues/...", "source": "n8n", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Template Opportunity Scanner
 
 ```
-@Andy every 2 weeks, analyze n8n forum for popular unsolved problems (high views, multiple replies, not solved). These are template opportunities. Send me top 5 with descriptions of what template would solve them.
+@Andy every 2 weeks, analyze n8n forum for popular unsolved problems (high views, multiple replies, not solved). These are template opportunities. Send me top 5 with descriptions of what template would solve them. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://community.n8n.io/...", "source": "n8n", "score": 8, "summary": "..."}</signal>
 ```
 
 ### Feature Request Monitor
 
 ```
-@Andy every week, check n8n GitHub feature requests. Find ones related to self-hosting, VPS, security, or advanced workflows. Send me interesting ones where I could: offer to implement it, provide consulting, or influence the direction.
+@Andy every week, check n8n GitHub feature requests. Find ones related to self-hosting, VPS, security, or advanced workflows. Send me interesting ones where I could: offer to implement it, provide consulting, or influence the direction. For any lead scoring 7 or above, also emit a signal tag:
+<signal type="LEAD_FOUND">{"title": "...", "url": "https://github.com/n8n-io/n8n/issues/...", "source": "n8n", "score": 8, "summary": "..."}</signal>
 ```
 
 ---
