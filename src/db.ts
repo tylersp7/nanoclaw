@@ -96,6 +96,19 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Notification dedup: prevent duplicate messages from scheduled tasks
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS notification_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content_hash TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      source TEXT,
+      sent_at TEXT NOT NULL,
+      suppressed INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_notif_hash ON notification_log(content_hash, chat_jid, sent_at);
+  `);
 }
 
 export function initDatabase(): void {
@@ -547,6 +560,89 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Notification dedup ---
+
+import crypto from 'crypto';
+
+/**
+ * Check if a message is a duplicate (sent recently with same content hash)
+ * Returns true if the message should be suppressed
+ */
+export function isNotificationDuplicate(
+  chatJid: string,
+  content: string,
+  windowMinutes: number = 360, // 6 hour dedup window
+): boolean {
+  // Normalize: strip timestamps, whitespace variations, emojis for dedup
+  const normalized = content
+    .replace(/\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?/gi, '') // strip times
+    .replace(/\d{4}-\d{2}-\d{2}/g, '') // strip dates
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 500); // only hash first 500 chars for efficiency
+
+  const hash = crypto.createHash('sha256').update(normalized).digest('hex').substring(0, 16);
+
+  const cutoff = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+
+  const existing = db.prepare(`
+    SELECT id FROM notification_log
+    WHERE content_hash = ? AND chat_jid = ? AND sent_at > ? AND suppressed = 0
+    LIMIT 1
+  `).get(hash, chatJid, cutoff);
+
+  return !!existing;
+}
+
+/**
+ * Log a notification that was sent (or suppressed)
+ */
+export function logNotification(
+  chatJid: string,
+  content: string,
+  source?: string,
+  suppressed: boolean = false,
+): void {
+  const normalized = content
+    .replace(/\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?/gi, '')
+    .replace(/\d{4}-\d{2}-\d{2}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 500);
+
+  const hash = crypto.createHash('sha256').update(normalized).digest('hex').substring(0, 16);
+
+  db.prepare(`
+    INSERT INTO notification_log (content_hash, chat_jid, source, sent_at, suppressed)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(hash, chatJid, source || null, new Date().toISOString(), suppressed ? 1 : 0);
+
+  // Cleanup old entries (older than 7 days)
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(`DELETE FROM notification_log WHERE sent_at < ?`).run(weekAgo);
+}
+
+/**
+ * Get notification stats for monitoring
+ */
+export function getNotificationStats(hours: number = 24): {
+  total: number;
+  sent: number;
+  suppressed: number;
+} {
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN suppressed = 0 THEN 1 ELSE 0 END) as sent,
+      SUM(CASE WHEN suppressed = 1 THEN 1 ELSE 0 END) as suppressed
+    FROM notification_log WHERE sent_at > ?
+  `).get(cutoff) as { total: number; sent: number; suppressed: number };
+
+  return row || { total: 0, sent: 0, suppressed: 0 };
 }
 
 // --- JSON migration ---

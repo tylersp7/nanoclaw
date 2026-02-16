@@ -106,10 +106,10 @@ async function connectSocket(phoneNumber?: string): Promise<void> {
         fs.writeFileSync(STATUS_FILE, 'failed:qr_timeout');
         console.log('\n✗ QR code timed out. Please try again.');
         process.exit(1);
-      } else if (reason === 515) {
+      } else if (reason === 515 || reason === DisconnectReason.restartRequired) {
         // 515 = stream error, often happens after pairing succeeds but before
         // registration completes. Reconnect to finish the handshake.
-        console.log('\n⟳ Stream error (515) after pairing — reconnecting...');
+        console.log('\nReconnecting...');
         connectSocket(phoneNumber);
       } else {
         fs.writeFileSync(STATUS_FILE, `failed:${reason || 'unknown'}`);

@@ -28,6 +28,21 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
+| `/add-slack` | ✅ Monitor VPS alerts from Slack channels |
+| `/add-gmail` | Add Gmail integration for email access |
+| `/add-telegram` | Add Telegram as alternative/additional channel |
+| `/add-reddit-monitor` | ✅ **NEW** Monitor Reddit for freelance opportunities (r/forhire, r/n8n, etc.) |
+| `/add-hn-monitor` | ✅ **NEW** Monitor HackerNews "Who's Hiring" and Ask HN posts |
+| `/add-github-monitor` | ✅ **NEW** Track repo activity, find consulting in GitHub issues |
+| `/add-n8n-monitor` | ✅ **NEW** Build reputation in n8n community, find consulting opportunities |
+
+**Lead Generation & Freelance:**
+- `LEAD_GEN_QUICK_START.md` - Complete 30-day freelance launch plan
+- `PROPOSED_SKILLS.md` - 13 total skills for freelance success
+- `SKILLS_PROGRESS.md` - Implementation progress (5/13 complete)
+
+**Completed:** 5 lead generation skills ready to use!
+**Next:** LinkedIn monitor, job board scraper, calendar integration
 
 ## Development
 

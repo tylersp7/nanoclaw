@@ -35,6 +35,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
 import { formatMessages, formatOutbound } from './router.js';
+import { startRelayServer } from './ssh-relay.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -452,6 +453,9 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Start SSH relay so containers can reach Tailscale-connected VPS servers
+  startRelayServer();
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {

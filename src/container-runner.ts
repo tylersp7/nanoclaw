@@ -18,6 +18,7 @@ import {
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { getRelaySecret, getRelayUrl } from './ssh-relay.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -159,6 +160,46 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Environment file directory for service-specific env vars (SSH relay, API keys)
+  // Auth tokens (CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY) are passed via stdin secrets.
+  // Main group gets service keys; non-main groups get nothing here.
+  if (isMain) {
+    const envDir = path.join(DATA_DIR, 'env', group.folder);
+    fs.mkdirSync(envDir, { recursive: true });
+    const filteredLines: string[] = [];
+
+    // Read service keys from .env
+    const envFile = path.join(projectRoot, '.env');
+    if (fs.existsSync(envFile)) {
+      const envContent = fs.readFileSync(envFile, 'utf-8');
+      const mainOnlyVars = ['PARALLEL_API_KEY', 'N8N_API_KEY'];
+      for (const line of envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        if (mainOnlyVars.some((v) => trimmed.startsWith(`${v}=`))) {
+          filteredLines.push(trimmed);
+        }
+      }
+    }
+
+    // Add SSH relay URL/secret so containers can proxy SSH through the host
+    filteredLines.push(`SSH_RELAY_URL=${getRelayUrl()}`);
+    filteredLines.push(`SSH_RELAY_SECRET=${getRelaySecret()}`);
+
+    if (filteredLines.length > 0) {
+      fs.writeFileSync(
+        path.join(envDir, 'env'),
+        filteredLines.join('\n') + '\n',
+      );
+      mounts.push({
+        hostPath: envDir,
+        containerPath: '/workspace/env-dir',
+        readonly: true,
+      });
+    }
+  }
+
+
   // Mount agent-runner source from host — recompiled on container startup.
   // Bypasses Apple Container's sticky build cache for code changes.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
@@ -167,6 +208,31 @@ function buildVolumeMounts(
     containerPath: '/app/src',
     readonly: true,
   });
+
+  // Mount SSH keys and VPS/service configs for main group (needed for VPS monitoring)
+  if (isMain) {
+    const homeDir = getHomeDir();
+    const sshKeyPath = path.join(homeDir, '.ssh', 'id_ed25519');
+    if (fs.existsSync(sshKeyPath)) {
+      mounts.push({
+        hostPath: path.join(homeDir, '.ssh'),
+        containerPath: '/home/node/.ssh',
+        readonly: true,
+      });
+    }
+    // Mount all nanoclaw service configs
+    const configDirs = ['vps', 'proposals', 'github', 'slack', 'calendar', 'n8n', 'job-boards', 'linkedin'];
+    for (const dir of configDirs) {
+      const configPath = path.join(homeDir, `.nanoclaw-${dir}`);
+      if (fs.existsSync(configPath)) {
+        mounts.push({
+          hostPath: configPath,
+          containerPath: `/home/node/.nanoclaw-${dir}`,
+          readonly: true,
+        });
+      }
+    }
+  }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
@@ -190,7 +256,11 @@ function readSecrets(): Record<string, string> {
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const args: string[] = ['run', '-i', '--rm', '--name', containerName,
+    // Use public DNS — the bridge gateway forwards to the host's router DNS,
+    // which can't resolve some domains (e.g. n8n.sparksbusinesssolutionsllc.com).
+    '--dns', '8.8.8.8',
+  ];
 
   // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {

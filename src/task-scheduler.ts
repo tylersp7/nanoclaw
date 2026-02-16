@@ -15,6 +15,8 @@ import {
   getAllTasks,
   getDueTasks,
   getTaskById,
+  isNotificationDuplicate,
+  logNotification,
   logTaskRun,
   updateTaskAfterRun,
 } from './db.js';
@@ -116,8 +118,19 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          // Forward result to user (strip <internal> tags, dedup)
+          const text = streamedOutput.result.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+          if (text) {
+            // Check for duplicate notifications (6h window)
+            if (isNotificationDuplicate(task.chat_jid, text)) {
+              logNotification(task.chat_jid, text, task.id, true);
+              logger.info({ taskId: task.id }, 'Suppressed duplicate notification');
+            } else {
+              logNotification(task.chat_jid, text, task.id, false);
+              // sendMessage handles formatting (prefix, etc.)
+              await deps.sendMessage(task.chat_jid, text);
+            }
+          }
           // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
         }
