@@ -13,7 +13,9 @@ import {
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  IDLE_TIMEOUT,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
@@ -39,6 +41,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  secrets?: Record<string, string>;
 }
 
 export interface ContainerOutput {
@@ -156,33 +159,6 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Environment file directory (workaround for Apple Container -i env var bug)
-  // Only expose specific auth variables needed by Claude Code, not the entire .env
-  const envDir = path.join(DATA_DIR, 'env');
-  fs.mkdirSync(envDir, { recursive: true });
-  const envFile = path.join(projectRoot, '.env');
-  if (fs.existsSync(envFile)) {
-    const envContent = fs.readFileSync(envFile, 'utf-8');
-    const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
-    const filteredLines = envContent.split('\n').filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return false;
-      return allowedVars.some((v) => trimmed.startsWith(`${v}=`));
-    });
-
-    if (filteredLines.length > 0) {
-      fs.writeFileSync(
-        path.join(envDir, 'env'),
-        filteredLines.join('\n') + '\n',
-      );
-      mounts.push({
-        hostPath: envDir,
-        containerPath: '/workspace/env-dir',
-        readonly: true,
-      });
-    }
-  }
-
   // Mount agent-runner source from host — recompiled on container startup.
   // Bypasses Apple Container's sticky build cache for code changes.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
@@ -203,6 +179,14 @@ function buildVolumeMounts(
   }
 
   return mounts;
+}
+
+/**
+ * Read allowed secrets from .env for passing to the container via stdin.
+ * Secrets are never written to disk or mounted as files.
+ */
+function readSecrets(): Record<string, string> {
+  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
@@ -279,9 +263,12 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    // Write input and close stdin (Apple Container doesn't flush pipe without EOF)
+    // Pass secrets via stdin (never written to disk or mounted as files)
+    input.secrets = readSecrets();
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
+    // Remove secrets from input so they don't appear in logs
+    delete input.secrets;
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
@@ -324,6 +311,7 @@ export async function runContainerAgent(
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }
+            hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -362,7 +350,11 @@ export async function runContainerAgent(
     });
 
     let timedOut = false;
-    const timeoutMs = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    let hadStreamingOutput = false;
+    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
+    // graceful _close sentinel has time to trigger before the hard kill fires.
+    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;
@@ -397,17 +389,36 @@ export async function runContainerAgent(
           `Container: ${containerName}`,
           `Duration: ${duration}ms`,
           `Exit Code: ${code}`,
+          `Had Streaming Output: ${hadStreamingOutput}`,
         ].join('\n'));
+
+        // Timeout after output = idle cleanup, not failure.
+        // The agent already sent its response; this is just the
+        // container being reaped after the idle period expired.
+        if (hadStreamingOutput) {
+          logger.info(
+            { group: group.name, containerName, duration, code },
+            'Container timed out after output (idle cleanup)',
+          );
+          outputChain.then(() => {
+            resolve({
+              status: 'success',
+              result: null,
+              newSessionId,
+            });
+          });
+          return;
+        }
 
         logger.error(
           { group: group.name, containerName, duration, code },
-          'Container timed out',
+          'Container timed out with no output',
         );
 
         resolve({
           status: 'error',
           result: null,
-          error: `Container timed out after ${group.containerConfig?.timeout || CONTAINER_TIMEOUT}ms`,
+          error: `Container timed out after ${configTimeout}ms`,
         });
         return;
       }
