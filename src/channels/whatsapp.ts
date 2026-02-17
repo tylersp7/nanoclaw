@@ -6,11 +6,12 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   WASocket,
+  downloadMediaMessage,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, STORE_DIR } from '../config.js';
+import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, GROUPS_DIR, STORE_DIR } from '../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
@@ -102,8 +103,10 @@ export class WhatsAppChannel implements Channel {
         this.connected = true;
         logger.info('Connected to WhatsApp');
 
-        // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
-        this.sock.sendPresenceUpdate('available').catch(() => {});
+        // Mark as unavailable so mobile device receives push notifications
+        // When marked as 'available', WhatsApp treats this as an active desktop client
+        // and suppresses mobile notifications. Setting to 'unavailable' enables notifications.
+        this.sock.sendPresenceUpdate('unavailable').catch(() => {});
 
         // Build LID to phone mapping from auth state for self-chat translation
         if (this.sock.user) {
@@ -131,6 +134,7 @@ export class WhatsAppChannel implements Channel {
             this.syncGroupMetadata().catch((err) =>
               logger.error({ err }, 'Periodic group sync failed'),
             );
+            this.cleanupOldMedia();
           }, GROUP_SYNC_INTERVAL_MS);
         }
 
@@ -181,6 +185,32 @@ export class WhatsAppChannel implements Channel {
             ? fromMe
             : content.startsWith(`${ASSISTANT_NAME}:`);
 
+          // Download image if present
+          let mediaPath: string | undefined;
+          if (msg.message?.imageMessage) {
+            try {
+              const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+                logger,
+                reuploadRequest: this.sock.updateMediaMessage,
+              });
+              if (buffer.length <= 15 * 1024 * 1024) {
+                const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
+                const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+                const folder = groups[chatJid].folder;
+                const mediaDir = path.join(GROUPS_DIR, folder, 'media');
+                fs.mkdirSync(mediaDir, { recursive: true });
+                const filename = `${msg.key.id}.${ext}`;
+                fs.writeFileSync(path.join(mediaDir, filename), buffer);
+                mediaPath = `media/${filename}`;
+                logger.info({ chatJid, mediaPath, size: buffer.length }, 'Downloaded image');
+              } else {
+                logger.warn({ chatJid, size: buffer.length }, 'Image too large, skipping download');
+              }
+            } catch (err) {
+              logger.error({ err, chatJid }, 'Failed to download image');
+            }
+          }
+
           this.opts.onMessage(chatJid, {
             id: msg.key.id || '',
             chat_jid: chatJid,
@@ -190,6 +220,7 @@ export class WhatsAppChannel implements Channel {
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
+            media_path: mediaPath,
           });
         }
       }
@@ -304,6 +335,28 @@ export class WhatsAppChannel implements Channel {
     }
 
     return jid;
+  }
+
+  private cleanupOldMedia(): void {
+    try {
+      const groups = this.opts.registeredGroups();
+      const maxAge = 7 * 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - maxAge;
+      for (const group of Object.values(groups)) {
+        const mediaDir = path.join(GROUPS_DIR, group.folder, 'media');
+        if (!fs.existsSync(mediaDir)) continue;
+        for (const file of fs.readdirSync(mediaDir)) {
+          const filePath = path.join(mediaDir, file);
+          const stat = fs.statSync(filePath);
+          if (stat.mtimeMs < cutoff) {
+            fs.unlinkSync(filePath);
+            logger.debug({ filePath }, 'Cleaned up old media file');
+          }
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Media cleanup failed');
+    }
   }
 
   private async flushOutgoingQueue(): Promise<void> {

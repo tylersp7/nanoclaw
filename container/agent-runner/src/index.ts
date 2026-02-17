@@ -47,9 +47,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -70,7 +74,7 @@ class MessageStream {
   push(text: string): void {
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: buildMultimodalContent(text) },
       parent_tool_use_id: null,
       session_id: '',
     });
@@ -92,6 +96,43 @@ class MessageStream {
       this.waiting = null;
     }
   }
+}
+
+/**
+ * Scan prompt for media="..." attributes, read files, and build multimodal content blocks.
+ * Falls back to plain string if no media found or all reads fail.
+ */
+function buildMultimodalContent(prompt: string): string | ContentBlock[] {
+  const mediaRegex = /media="([^"]+)"/g;
+  const matches = [...prompt.matchAll(mediaRegex)];
+  if (matches.length === 0) return prompt;
+
+  const blocks: ContentBlock[] = [{ type: 'text', text: prompt }];
+  let added = 0;
+
+  for (const match of matches) {
+    const relativePath = match[1];
+    const fullPath = path.join('/workspace/group', relativePath);
+    try {
+      const data = fs.readFileSync(fullPath);
+      const ext = path.extname(relativePath).slice(1).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp',
+      };
+      const mediaType = mimeMap[ext] || 'image/jpeg';
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mediaType, data: data.toString('base64') },
+      });
+      added++;
+      log(`Added image block: ${relativePath} (${data.length} bytes)`);
+    } catch (err) {
+      log(`Failed to read media file ${fullPath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return added > 0 ? blocks : prompt;
 }
 
 async function readStdin(): Promise<string> {
