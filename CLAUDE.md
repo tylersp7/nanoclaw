@@ -45,6 +45,8 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/add-vps-health-pipeline` | ✅ **NEW** Automated VPS health: Slack alerts → SSH investigate → auto-remediate → report |
 | `/add-client-followup` | ✅ **NEW** Automated follow-ups: CRM monitoring, draft follow-up messages, deadline reminders |
 | `/add-portfolio-pipeline` | ✅ **NEW** Portfolio auto-update: GitHub activity → highlights → portfolio files → LinkedIn draft |
+| `/add-property-monitor` | ✅ **NEW** Weekly property value/rent monitoring via RentCast API (free tier) |
+| `/add-life-system` | ✅ **NEW** Personal life OS: daily accountability loop + deep work reminders |
 
 **Lead Generation & Freelance:**
 - `LEAD_GEN_QUICK_START.md` - Complete 30-day freelance launch plan

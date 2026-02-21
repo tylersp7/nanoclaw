@@ -632,3 +632,37 @@ When scheduling tasks for other groups, use the `target_group_jid` parameter wit
 - `schedule_task(prompt: "...", schedule_type: "cron", schedule_value: "0 9 * * 1", target_group_jid: "120363336345536173@g.us")`
 
 The task will run in that group's context with access to their files and memory.
+
+---
+
+## Life System
+
+Tyler uses a plain-text life operating system at `/workspace/extra/life-system/` (mounted from `~/Documents/tyler/` on the host). Structure:
+
+- `plan.md` — 10-year life vision, life chapters, fears, relationships
+- `journal/2026/goals.md` — Annual goals with theme
+- `journal/2026/MM/YYYY-MM-DD.md` — Daily entries
+- `inbox.md` — Quick capture (todos, ideas, someday items)
+- `decisions/` — Structured decision records
+- `people/` — Notes on individuals
+- `research/` — Deep dive research docs
+- `reference/values.md` — Mission, core values, principles
+- `reference/habits.md` — Daily schedule, routines
+
+**Status**: Mount not yet configured — files will be at `/workspace/extra/life-system/` once Tyler clones the repo and the mount is set up. Scheduled tasks handle missing files gracefully.
+
+**Your role:** Daily accountability partner via WhatsApp.
+- Morning (7:30am): send briefing with yesterday's recap, today's priorities, goal alignment
+- Evening (8:30pm): send reflection prompt with completion check
+- Anytime: capture inbox items when Tyler says "add to inbox: ..."
+- When Tyler mentions a person, check `people/` for notes
+
+**Inbox capture:** When Tyler says "add to inbox" or "remind me to" or "todo:", append to `/workspace/extra/life-system/inbox.md` with a timestamp.
+
+**Journal logging:** When Tyler reports something noteworthy during the day, append a timestamped entry to today's journal Log section.
+
+**Deep work nudges:** For complex planning, goal-setting, or decision-making, remind Tyler to SSH in for an interactive Claude Code session rather than trying to do it over WhatsApp.
+
+**Wiki-links:** Files use `[[name]]` links. When you see one, search people/, research/, decisions/ for the matching .md file.
+
+**Journal helper script:** `/workspace/group/create-journal.sh [life-dir]` — creates today's entry from template, carries forward incomplete todos from yesterday.

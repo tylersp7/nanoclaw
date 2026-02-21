@@ -29,6 +29,7 @@ import {
   updateTaskAfterRun,
 } from './db.js';
 import { detectAndQueueFollowUps } from './follow-up-detector.js';
+import { isConfigured as isSheetsConfigured, logAlertToSheet, flushSheetLogs } from './sheets-logger.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { NotificationBatcher } from './notification-batcher.js';
@@ -151,9 +152,15 @@ async function runTask(
             // Check for duplicate notifications (6h window)
             if (isNotificationDuplicate(task.chat_jid, text)) {
               logNotification(task.chat_jid, text, task.id, true);
+              if (isSheetsConfigured()) {
+                logAlertToSheet(task.id, task.prompt, task.chat_jid, text, true).catch(() => {});
+              }
               logger.info({ taskId: task.id }, 'Suppressed duplicate notification');
             } else {
               logNotification(task.chat_jid, text, task.id, false);
+              if (isSheetsConfigured()) {
+                logAlertToSheet(task.id, task.prompt, task.chat_jid, text, false).catch(() => {});
+              }
               // sendMessage handles formatting (prefix, etc.)
               await deps.sendMessage(task.chat_jid, text);
             }
@@ -225,6 +232,7 @@ let batcher: NotificationBatcher | null = null;
 /** Flush all pending batched notifications (call on shutdown). */
 export async function flushNotifications(): Promise<void> {
   if (batcher) await batcher.flushAll();
+  await flushSheetLogs();
 }
 
 export function startSchedulerLoop(deps: SchedulerDependencies): void {

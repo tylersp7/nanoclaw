@@ -39,25 +39,31 @@ interface CachedGroupState {
   envChecksum: string | null;
 }
 
-const SKILLS_SRC = path.join(process.cwd(), 'container', 'skills');
+// Skills live in two places: container/skills/ (container-specific) and .claude/skills/ (project-level).
+// Both are synced into the container's /home/node/.claude/skills/ so Andy can discover them.
+const SKILLS_SOURCES = [
+  path.join(process.cwd(), 'container', 'skills'),
+  path.join(process.cwd(), '.claude', 'skills'),
+];
 
 /**
- * Compute a fast checksum of the skills source directory.
+ * Compute a fast checksum of all skills source directories.
  * Hashes file names + mtimeMs for each skill file. Only re-copies
  * when the checksum changes (new/modified/deleted skill files).
  */
 function computeSkillsChecksum(): string | null {
-  if (!fs.existsSync(SKILLS_SRC)) return null;
-
   const parts: string[] = [];
   try {
-    for (const skillDir of fs.readdirSync(SKILLS_SRC)) {
-      const srcDir = path.join(SKILLS_SRC, skillDir);
-      const stat = fs.statSync(srcDir);
-      if (!stat.isDirectory()) continue;
-      for (const file of fs.readdirSync(srcDir)) {
-        const fileStat = fs.statSync(path.join(srcDir, file));
-        parts.push(`${skillDir}/${file}:${fileStat.size}:${fileStat.mtimeMs}`);
+    for (const skillsSrc of SKILLS_SOURCES) {
+      if (!fs.existsSync(skillsSrc)) continue;
+      for (const skillDir of fs.readdirSync(skillsSrc)) {
+        const srcDir = path.join(skillsSrc, skillDir);
+        const stat = fs.statSync(srcDir);
+        if (!stat.isDirectory()) continue;
+        for (const file of fs.readdirSync(srcDir)) {
+          const fileStat = fs.statSync(path.join(srcDir, file));
+          parts.push(`${skillDir}/${file}:${fileStat.size}:${fileStat.mtimeMs}`);
+        }
       }
     }
   } catch {
@@ -69,7 +75,7 @@ function computeSkillsChecksum(): string | null {
 }
 
 /**
- * Sync skills from container/skills/ into a group's .claude/skills/.
+ * Sync skills from all source directories into a group's .claude/skills/.
  * Skips the copy entirely when the checksum matches the cached value.
  */
 export function syncSkillsIfNeeded(
@@ -78,7 +84,7 @@ export function syncSkillsIfNeeded(
   currentChecksum: string | null,
 ): boolean {
   // Nothing to sync
-  if (!currentChecksum || !fs.existsSync(SKILLS_SRC)) return false;
+  if (!currentChecksum) return false;
 
   // Already synced with this checksum
   if (cached?.skillsSynced && cached.skillsChecksum === currentChecksum) {
@@ -86,13 +92,18 @@ export function syncSkillsIfNeeded(
   }
 
   const skillsDst = path.join(groupSessionsDir, 'skills');
-  for (const skillDir of fs.readdirSync(SKILLS_SRC)) {
-    const srcDir = path.join(SKILLS_SRC, skillDir);
-    if (!fs.statSync(srcDir).isDirectory()) continue;
-    const dstDir = path.join(skillsDst, skillDir);
-    fs.mkdirSync(dstDir, { recursive: true });
-    for (const file of fs.readdirSync(srcDir)) {
-      fs.copyFileSync(path.join(srcDir, file), path.join(dstDir, file));
+  for (const skillsSrc of SKILLS_SOURCES) {
+    if (!fs.existsSync(skillsSrc)) continue;
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.mkdirSync(dstDir, { recursive: true });
+      for (const entry of fs.readdirSync(srcDir)) {
+        const entryPath = path.join(srcDir, entry);
+        if (!fs.statSync(entryPath).isFile()) continue;
+        fs.copyFileSync(entryPath, path.join(dstDir, entry));
+      }
     }
   }
 
