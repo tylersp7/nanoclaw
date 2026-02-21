@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -11,6 +10,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -387,65 +387,8 @@ function recoverPendingMessages(): void {
 }
 
 function ensureContainerSystemRunning(): void {
-  try {
-    execSync('container system status', { stdio: 'pipe' });
-    logger.debug('Apple Container system already running');
-  } catch {
-    logger.info('Starting Apple Container system...');
-    try {
-      execSync('container system start', { stdio: 'pipe', timeout: 30000 });
-      logger.info('Apple Container system started');
-    } catch (err) {
-      logger.error({ err }, 'Failed to start Apple Container system');
-      console.error(
-        '\n╔════════════════════════════════════════════════════════════════╗',
-      );
-      console.error(
-        '║  FATAL: Apple Container system failed to start                 ║',
-      );
-      console.error(
-        '║                                                                ║',
-      );
-      console.error(
-        '║  Agents cannot run without Apple Container. To fix:           ║',
-      );
-      console.error(
-        '║  1. Install from: https://github.com/apple/container/releases ║',
-      );
-      console.error(
-        '║  2. Run: container system start                               ║',
-      );
-      console.error(
-        '║  3. Restart NanoClaw                                          ║',
-      );
-      console.error(
-        '╚════════════════════════════════════════════════════════════════╝\n',
-      );
-      throw new Error('Apple Container system is required but failed to start');
-    }
-  }
-
-  // Kill and clean up orphaned NanoClaw containers from previous runs
-  try {
-    const output = execSync('container ls --format json', {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-    });
-    const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
-    const orphans = containers
-      .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
-      .map((c) => c.configuration.id);
-    for (const name of orphans) {
-      try {
-        execSync(`container stop ${name}`, { stdio: 'pipe' });
-      } catch { /* already stopped */ }
-    }
-    if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
-    }
-  } catch (err) {
-    logger.warn({ err }, 'Failed to clean up orphaned containers');
-  }
+  ensureContainerRuntimeRunning();
+  cleanupOrphans();
 }
 
 async function main(): Promise<void> {
@@ -471,7 +414,7 @@ async function main(): Promise<void> {
   // Create WhatsApp channel
   whatsapp = new WhatsAppChannel({
     onMessage: (chatJid, msg) => storeMessage(msg),
-    onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+    onChatMetadata: (chatJid, timestamp, name, channel, isGroup) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
   });
 

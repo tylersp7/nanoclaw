@@ -76,7 +76,13 @@ export class WhatsAppChannel implements Channel {
         exec(
           `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
         );
-        setTimeout(() => process.exit(1), 1000);
+        // Save QR as image for scanning
+        import('qrcode').then(m => {
+          const qrPath = '/tmp/nanoclaw-qr.png';
+          m.default.toFile(qrPath, qr, { scale: 8 }, () => {
+            exec(`open "${qrPath}"`);
+          });
+        }).catch(() => {});
       }
 
       if (connection === 'close') {
@@ -162,7 +168,8 @@ export class WhatsAppChannel implements Channel {
         ).toISOString();
 
         // Always notify about chat metadata for group discovery
-        this.opts.onChatMetadata(chatJid, timestamp);
+        const isGroup = chatJid.endsWith('@g.us');
+        this.opts.onChatMetadata(chatJid, timestamp, undefined, 'whatsapp', isGroup);
 
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();

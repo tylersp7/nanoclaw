@@ -17,6 +17,7 @@ import {
   IDLE_TIMEOUT,
 } from './config.js';
 import { getContainerPool, syncSkillsIfNeeded } from './container-pool.js';
+import { CONTAINER_RUNTIME_BIN, stopContainer } from './container-runtime.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -138,16 +139,23 @@ function buildVolumeMounts(
     }
   } else {
     // Fallback: always sync (original behavior)
-    const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+    // Sync from both container/skills/ and .claude/skills/
+    const skillsSources = [
+      path.join(process.cwd(), 'container', 'skills'),
+      path.join(process.cwd(), '.claude', 'skills'),
+    ];
     const skillsDst = path.join(groupSessionsDir, 'skills');
-    if (fs.existsSync(skillsSrc)) {
+    for (const skillsSrc of skillsSources) {
+      if (!fs.existsSync(skillsSrc)) continue;
       for (const skillDir of fs.readdirSync(skillsSrc)) {
         const srcDir = path.join(skillsSrc, skillDir);
         if (!fs.statSync(srcDir).isDirectory()) continue;
         const dstDir = path.join(skillsDst, skillDir);
         fs.mkdirSync(dstDir, { recursive: true });
-        for (const file of fs.readdirSync(srcDir)) {
-          fs.copyFileSync(path.join(srcDir, file), path.join(dstDir, file));
+        for (const entry of fs.readdirSync(srcDir)) {
+          const entryPath = path.join(srcDir, entry);
+          if (!fs.statSync(entryPath).isFile()) continue;
+          fs.copyFileSync(entryPath, path.join(dstDir, entry));
         }
       }
     }
@@ -189,7 +197,7 @@ function buildVolumeMounts(
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
       const envContent = fs.readFileSync(envFile, 'utf-8');
-      const mainOnlyVars = ['PARALLEL_API_KEY', 'N8N_API_KEY'];
+      const mainOnlyVars = ['PARALLEL_API_KEY', 'N8N_API_KEY', 'RENTCAST_API_KEY'];
       for (const line of envContent.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) continue;
@@ -241,7 +249,7 @@ function buildVolumeMounts(
       });
     }
     // Mount all nanoclaw service configs
-    const configDirs = ['vps', 'proposals', 'github', 'slack', 'calendar', 'n8n', 'job-boards', 'linkedin'];
+    const configDirs = ['vps', 'proposals', 'github', 'slack', 'calendar', 'n8n', 'job-boards', 'linkedin', 'property'];
     for (const dir of configDirs) {
       const configPath = path.join(homeDir, `.nanoclaw-${dir}`);
       if (fs.existsSync(configPath)) {
@@ -342,7 +350,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -449,7 +457,7 @@ export async function runContainerAgent(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      exec(`${CONTAINER_RUNTIME_BIN} stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');
