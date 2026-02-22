@@ -68,6 +68,7 @@ export interface ScheduledTask {
   created_at: string;
   pipeline_steps?: string | null;  // JSON string of PipelineStep[]
   pipeline_state?: string | null;  // JSON string of PipelineState
+  task_category?: string | null;   // Queue sharding key for parallel execution
 }
 
 // Pipeline step definition (stored as JSON in scheduled_tasks.pipeline_steps)

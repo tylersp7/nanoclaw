@@ -476,6 +476,47 @@ When monitoring tools find opportunities, automatically add high-scoring ones as
 
 ---
 
+## HubSpot CRM
+
+Sync leads to HubSpot for dashboards, follow-up tracking, and revenue analytics. Leads added via `crm.sh` auto-sync to HubSpot when configured.
+
+**Setup (one-time):**
+```bash
+/workspace/project/container/tools/hubspot.sh setup-properties
+```
+
+**Sync unsynced leads:**
+```bash
+/workspace/project/container/tools/hubspot.sh sync [--limit N]
+```
+
+**Check sync status:**
+```bash
+/workspace/project/container/tools/hubspot.sh status
+```
+
+**Find a contact:**
+```bash
+/workspace/project/container/tools/hubspot.sh lookup <email|monitor_id>
+```
+
+**Force-sync a specific lead:**
+```bash
+/workspace/project/container/tools/hubspot.sh push-lead <lead_id>
+```
+
+**Create follow-up task:**
+```bash
+/workspace/project/container/tools/hubspot.sh create-task <lead_id> 'subject' [--due DAYS] [--priority HIGH|MEDIUM|LOW]
+```
+
+**List pipeline stages (debugging):**
+```bash
+/workspace/project/container/tools/hubspot.sh stages
+```
+
+---
+
 ## Admin Context
 
 This is the **main channel**, which has elevated privileges.

@@ -26,7 +26,8 @@ Your job:
 1. Parse the lead data
 2. If the lead score is >= 7, generate a tailored proposal draft
 3. Add the lead to the CRM (use the CRM tools available)
-4. Use send_message to notify with a summary including: source, title, score, and whether a proposal was generated
+4. If hubspot.sh is available (check with hubspot.sh validate), sync the lead: hubspot.sh push-lead <lead_id>
+5. Use send_message to notify with a summary including: source, title, score, and whether a proposal was generated
 
 Keep the notification concise. Use <internal> tags for any verbose analysis.`;
     },

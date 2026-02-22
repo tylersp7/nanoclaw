@@ -21,6 +21,8 @@ export interface Lead {
   createdAt: string;
   updatedAt: string;
   wonAmount?: number;
+  hubspotContactId?: string;
+  hubspotDealId?: string;
 }
 
 interface CRMData {
@@ -95,6 +97,10 @@ export function addLead(
 
   data.leads.push(lead);
   saveData(data);
+
+  // Auto-sync to HubSpot if configured
+  syncLeadToHubSpot(lead).catch(() => {});
+
   return lead;
 }
 
@@ -103,11 +109,13 @@ export function addLead(
  */
 export function updateLead(
   id: string,
-  updates: Partial<Pick<Lead, 'status' | 'notes' | 'followUpDate' | 'proposalDraft' | 'clientName' | 'clientEmail' | 'score' | 'wonAmount'>>
+  updates: Partial<Pick<Lead, 'status' | 'notes' | 'followUpDate' | 'proposalDraft' | 'clientName' | 'clientEmail' | 'score' | 'wonAmount' | 'hubspotContactId' | 'hubspotDealId'>>
 ): Lead | null {
   const data = loadData();
   const lead = data.leads.find(l => l.id === id);
   if (!lead) return null;
+
+  const statusChanged = updates.status && updates.status !== lead.status;
 
   if (updates.status) lead.status = updates.status;
   if (updates.followUpDate) lead.followUpDate = updates.followUpDate;
@@ -116,6 +124,8 @@ export function updateLead(
   if (updates.clientEmail) lead.clientEmail = updates.clientEmail;
   if (updates.score !== undefined) lead.score = updates.score;
   if (updates.wonAmount !== undefined) lead.wonAmount = updates.wonAmount;
+  if (updates.hubspotContactId) lead.hubspotContactId = updates.hubspotContactId;
+  if (updates.hubspotDealId) lead.hubspotDealId = updates.hubspotDealId;
   if (updates.notes) {
     lead.notes.push(...updates.notes);
   }
@@ -131,6 +141,12 @@ export function updateLead(
   }
 
   saveData(data);
+
+  // Auto-update HubSpot deal stage if status changed and HubSpot IDs exist
+  if (statusChanged && lead.hubspotDealId) {
+    updateHubSpotDealStage(lead.hubspotDealId, lead.status).catch(() => {});
+  }
+
   return lead;
 }
 
@@ -315,4 +331,38 @@ ${statusLines || 'None'}
 
 *By Source:*
 ${sourceLines || 'None'}`;
+}
+
+// ---------------------------------------------------------------------------
+// HubSpot auto-sync helpers (lazy-loaded to avoid circular deps)
+// ---------------------------------------------------------------------------
+
+async function syncLeadToHubSpot(lead: Lead): Promise<void> {
+  try {
+    const { isHubSpotConfigured, syncLead } = await import('./hubspot-sync.js');
+    if (!isHubSpotConfigured()) return;
+    const result = await syncLead(lead);
+    if (result.success && result.contactId) {
+      // Write HubSpot IDs back to local lead
+      const data = loadData();
+      const local = data.leads.find(l => l.id === lead.id);
+      if (local) {
+        local.hubspotContactId = result.contactId;
+        local.hubspotDealId = result.dealId;
+        saveData(data);
+      }
+    }
+  } catch {
+    // HubSpot sync is best-effort — don't block CRM writes
+  }
+}
+
+async function updateHubSpotDealStage(dealId: string, status: string): Promise<void> {
+  try {
+    const { isHubSpotConfigured, updateDealStage } = await import('./hubspot-sync.js');
+    if (!isHubSpotConfigured()) return;
+    await updateDealStage(dealId, status);
+  } catch {
+    // Best-effort
+  }
 }

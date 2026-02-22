@@ -78,6 +78,22 @@ export const NOTIFICATION_BATCH_MAX = parseInt(
   10,
 );
 
+// Quiet hours: hold non-critical notifications during this window
+export const QUIET_HOURS_START = parseInt(process.env.QUIET_HOURS_START || '8', 10);
+export const QUIET_HOURS_END = parseInt(process.env.QUIET_HOURS_END || '14', 10);
+
+// Patterns indicating "nothing to report" — suppress these notifications
+export const NOTHING_TO_REPORT_PATTERNS = [
+  /nothing\s*(new\s*)?found/i,
+  /no\s*(new\s*)?(leads|changes|issues|alerts|updates|results|opportunities)/i,
+  /all\s*(caught\s*up|clear|good|healthy|systems?\s*normal)/i,
+  /\b0\s*(new\s*)?(leads|items|results|matches|opportunities)/i,
+  /already\s*(done|verified|completed|checked|processed|up[- ]to[- ]date)/i,
+  /no\s*action\s*(needed|required)/i,
+  /everything\s*(looks?\s*good|is\s*(fine|normal|healthy))/i,
+  /nothing\s*to\s*report/i,
+];
+
 // Google Sheets alert logging
 export const SHEETS_SPREADSHEET_ID =
   process.env.SHEETS_SPREADSHEET_ID || envConfig.SHEETS_SPREADSHEET_ID || '';

@@ -8,7 +8,7 @@ case "$1" in
     TITLE="$2"
     SOURCE="$3"
     if [ -z "$TITLE" ] || [ -z "$SOURCE" ]; then
-      echo "Usage: crm.sh add 'title' 'source' [--url URL] [--budget BUDGET] [--score N] [--client NAME]"
+      echo "Usage: crm.sh add 'title' 'source' [--url URL] [--budget BUDGET] [--score N] [--client NAME] [--pending]"
       exit 1
     fi
     shift 3
@@ -19,6 +19,7 @@ case "$1" in
         --budget) OPTS=$(echo "$OPTS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.budget='$2';console.log(JSON.stringify(o))"); shift 2 ;;
         --score) OPTS=$(echo "$OPTS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.score=$2;console.log(JSON.stringify(o))"); shift 2 ;;
         --client) OPTS=$(echo "$OPTS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.clientName='$2';console.log(JSON.stringify(o))"); shift 2 ;;
+        --pending) OPTS=$(echo "$OPTS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.pendingDecision=true;console.log(JSON.stringify(o))"); shift ;;
         *) shift ;;
       esac
     done
@@ -38,7 +39,7 @@ case "$1" in
   update)
     ID="$2"
     if [ -z "$ID" ]; then
-      echo "Usage: crm.sh update <lead_id> [--status STATUS] [--score N] [--follow-up DATE] [--client NAME] [--email EMAIL] [--won-amount N]"
+      echo "Usage: crm.sh update <lead_id> [--status STATUS] [--score N] [--follow-up DATE] [--client NAME] [--email EMAIL] [--won-amount N] [--pending true|false]"
       exit 1
     fi
     shift 2
@@ -51,6 +52,7 @@ case "$1" in
         --client) UPDATES=$(echo "$UPDATES" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.clientName='$2';console.log(JSON.stringify(o))"); shift 2 ;;
         --email) UPDATES=$(echo "$UPDATES" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.clientEmail='$2';console.log(JSON.stringify(o))"); shift 2 ;;
         --won-amount) UPDATES=$(echo "$UPDATES" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.wonAmount=$2;console.log(JSON.stringify(o))"); shift 2 ;;
+        --pending) UPDATES=$(echo "$UPDATES" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.pendingDecision=('$2'==='true');console.log(JSON.stringify(o))"); shift 2 ;;
         *) shift ;;
       esac
     done
@@ -90,6 +92,7 @@ case "$1" in
         --source) FILTERS=$(echo "$FILTERS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.source='$2';console.log(JSON.stringify(o))"); shift 2 ;;
         --min-score) FILTERS=$(echo "$FILTERS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.minScore=$2;console.log(JSON.stringify(o))"); shift 2 ;;
         --limit) FILTERS=$(echo "$FILTERS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.limit=$2;console.log(JSON.stringify(o))"); shift 2 ;;
+        --pending) FILTERS=$(echo "$FILTERS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));o.pendingDecision=('$2'==='true');console.log(JSON.stringify(o))"); shift 2 ;;
         *) shift ;;
       esac
     done
@@ -154,9 +157,9 @@ case "$1" in
     echo "  follow-ups                       - Show due follow-ups"
     echo "  stats                            - Pipeline statistics"
     echo ""
-    echo "Add options: --url URL --budget BUDGET --score N --client NAME"
-    echo "Update options: --status STATUS --score N --follow-up DATE --client NAME --email EMAIL --won-amount N"
-    echo "List filters: --status STATUS --source SOURCE --min-score N --limit N"
+    echo "Add options: --url URL --budget BUDGET --score N --client NAME --pending"
+    echo "Update options: --status STATUS --score N --follow-up DATE --client NAME --email EMAIL --won-amount N --pending true|false"
+    echo "List filters: --status STATUS --source SOURCE --min-score N --limit N --pending true|false"
     echo ""
     echo "Statuses: new, contacted, responded, interview, proposal_sent, won, lost, skipped"
     echo "Sources: upwork, freelancer, reddit, hn, linkedin, github, n8n, referral"

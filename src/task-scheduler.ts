@@ -8,8 +8,11 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
+  NOTHING_TO_REPORT_PATTERNS,
   NOTIFICATION_BATCH_MAX,
   NOTIFICATION_BATCH_WINDOW,
+  QUIET_HOURS_END,
+  QUIET_HOURS_START,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
@@ -35,6 +38,50 @@ import { logger } from './logger.js';
 import { NotificationBatcher } from './notification-batcher.js';
 import { runPipeline } from './pipeline-runner.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+
+// --- Notification filtering helpers ---
+
+/** Returns true if the message is a "nothing to report" result (short + matches patterns). */
+function isNothingToReport(text: string): boolean {
+  if (text.length > 500) return false; // longer messages likely contain real analysis
+  return NOTHING_TO_REPORT_PATTERNS.some((p) => p.test(text));
+}
+
+/** Returns true if current time falls within the configured quiet hours window. */
+function isQuietHours(): boolean {
+  const now = new Date();
+  const hour = parseInt(
+    now.toLocaleString('en-US', { timeZone: TIMEZONE, hour: 'numeric', hour12: false }),
+    10,
+  );
+  if (QUIET_HOURS_START <= QUIET_HOURS_END) {
+    // e.g. 8–14: quiet when hour >= 8 AND hour < 14
+    return hour >= QUIET_HOURS_START && hour < QUIET_HOURS_END;
+  }
+  // Midnight wrap: e.g. 22–6: quiet when hour >= 22 OR hour < 6
+  return hour >= QUIET_HOURS_START || hour < QUIET_HOURS_END;
+}
+
+/** Returns true if the message contains urgency signals that should bypass quiet hours. */
+function isUrgentMessage(text: string): boolean {
+  if (/\bURGENT\b/i.test(text)) return true;
+  if (/\bCRITICAL\b/i.test(text)) return true;
+  if (/\bESCALATE\b/i.test(text)) return true;
+  if (/🔴/.test(text)) return true;
+  if (/\bDOWN\b/i.test(text) && /\b(SERVER|VPS|SERVICE|DATABASE|SITE)\b/i.test(text)) return true;
+  return false;
+}
+
+// --- Quiet hours queue ---
+
+interface QueuedNotification {
+  jid: string;
+  text: string;
+  taskId: string;
+}
+
+const quietHoursQueue: QueuedNotification[] = [];
+let quietHoursTimer: ReturnType<typeof setInterval> | null = null;
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
@@ -123,12 +170,20 @@ async function runTask(
   // so the container exits instead of hanging at waitForIpcMessage forever.
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Scheduled tasks finish quickly (2-5 min) — use a shorter idle timeout
+  // so containers don't sit idle for the full 30-min IDLE_TIMEOUT.
+  const SCHEDULED_TASK_IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+  const queueKey = task.task_category
+    ? `category:${task.task_category}`
+    : task.chat_jid;
+
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       logger.debug({ taskId: task.id }, 'Scheduled task idle timeout, closing container stdin');
-      deps.queue.closeStdin(task.chat_jid);
-    }, IDLE_TIMEOUT);
+      deps.queue.closeStdin(queueKey);
+    }, SCHEDULED_TASK_IDLE_TIMEOUT);
   };
 
   try {
@@ -142,26 +197,35 @@ async function runTask(
         isMain,
         isScheduledTask: true,
       },
-      (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+      (proc, containerName) => deps.onProcess(queueKey, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (strip <internal> tags, dedup)
           const text = streamedOutput.result.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
           if (text) {
-            // Check for duplicate notifications (6h window)
-            if (isNotificationDuplicate(task.chat_jid, text)) {
+            // 1. Suppress "nothing to report" messages
+            if (isNothingToReport(text)) {
+              logNotification(task.chat_jid, text, task.id, true);
+              logger.info({ taskId: task.id }, 'Suppressed nothing-to-report notification');
+            // 2. Check for duplicate notifications (6h window)
+            } else if (isNotificationDuplicate(task.chat_jid, text, 360, task.id)) {
               logNotification(task.chat_jid, text, task.id, true);
               if (isSheetsConfigured()) {
                 logAlertToSheet(task.id, task.prompt, task.chat_jid, text, true).catch(() => {});
               }
               logger.info({ taskId: task.id }, 'Suppressed duplicate notification');
+            // 3. Queue non-urgent messages during quiet hours
+            } else if (isQuietHours() && !isUrgentMessage(text)) {
+              logNotification(task.chat_jid, text, task.id, true);
+              quietHoursQueue.push({ jid: task.chat_jid, text, taskId: task.id });
+              logger.info({ taskId: task.id }, 'Queued notification for after quiet hours');
+            // 4. Send normally
             } else {
               logNotification(task.chat_jid, text, task.id, false);
               if (isSheetsConfigured()) {
                 logAlertToSheet(task.id, task.prompt, task.chat_jid, text, false).catch(() => {});
               }
-              // sendMessage handles formatting (prefix, etc.)
               await deps.sendMessage(task.chat_jid, text);
             }
           }
@@ -197,14 +261,19 @@ async function runTask(
 
   const durationMs = Date.now() - startTime;
 
-  logTaskRun({
-    task_id: task.id,
-    run_at: new Date().toISOString(),
-    duration_ms: durationMs,
-    status: error ? 'error' : 'success',
-    result,
-    error,
-  });
+  // Only log to task_run_logs for real scheduled tasks (not follow-ups which
+  // use synthetic IDs that don't exist in the scheduled_tasks table, causing
+  // a FOREIGN KEY constraint failure).
+  if (!task.id.startsWith('followup-')) {
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      status: error ? 'error' : 'success',
+      result,
+      error,
+    });
+  }
 
   let nextRun: string | null = null;
   if (task.schedule_type === 'cron') {
@@ -231,6 +300,14 @@ let batcher: NotificationBatcher | null = null;
 
 /** Flush all pending batched notifications (call on shutdown). */
 export async function flushNotifications(): Promise<void> {
+  // Drain quiet hours queue — on shutdown, send everything
+  if (batcher && quietHoursQueue.length > 0) {
+    logger.info({ count: quietHoursQueue.length }, 'Flushing quiet hours queue on shutdown');
+    while (quietHoursQueue.length > 0) {
+      const item = quietHoursQueue.shift()!;
+      batcher.send(item.jid, item.text);
+    }
+  }
   if (batcher) await batcher.flushAll();
   await flushSheetLogs();
 }
@@ -257,6 +334,17 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 
   logger.info('Scheduler loop started');
 
+  // Quiet hours flush: check every 5 min if quiet hours ended, then drain queue
+  quietHoursTimer = setInterval(() => {
+    if (!isQuietHours() && quietHoursQueue.length > 0) {
+      logger.info({ count: quietHoursQueue.length }, 'Quiet hours ended, flushing queued notifications');
+      while (quietHoursQueue.length > 0) {
+        const item = quietHoursQueue.shift()!;
+        batcher!.send(item.jid, item.text);
+      }
+    }
+  }, 5 * 60 * 1000);
+
   const loop = async () => {
     try {
       const dueTasks = getDueTasks();
@@ -271,8 +359,11 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
+        const taskQueueKey = currentTask.task_category
+          ? `category:${currentTask.task_category}`
+          : currentTask.chat_jid;
         batchedDeps.queue.enqueueTask(
-          currentTask.chat_jid,
+          taskQueueKey,
           currentTask.id,
           () => runTask(currentTask, batchedDeps),
         );

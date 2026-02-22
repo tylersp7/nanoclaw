@@ -124,6 +124,15 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add task_category column for queue sharding (parallel task execution)
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN task_category TEXT DEFAULT NULL`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Pipeline run logs
   database.exec(`
     CREATE TABLE IF NOT EXISTS pipeline_run_logs (
@@ -172,6 +181,21 @@ function createSchema(database: Database.Database): void {
       suppressed INTEGER DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_notif_hash ON notification_log(content_hash, chat_jid, sent_at);
+  `);
+
+  // HubSpot sync tracking
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS hubspot_sync_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lead_id TEXT NOT NULL,
+      hubspot_contact_id TEXT,
+      hubspot_deal_id TEXT,
+      action TEXT NOT NULL,
+      status TEXT NOT NULL,
+      synced_at TEXT NOT NULL,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_hubspot_sync ON hubspot_sync_log(lead_id, synced_at);
   `);
 
   // Add channel and is_group columns to chats (migration for existing DBs)
@@ -740,6 +764,7 @@ export function isNotificationDuplicate(
   chatJid: string,
   content: string,
   windowMinutes: number = 360, // 6 hour dedup window
+  taskId?: string,
 ): boolean {
   // Normalize: strip timestamps, whitespace variations, emojis for dedup
   const normalized = content
@@ -753,13 +778,26 @@ export function isNotificationDuplicate(
 
   const cutoff = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
 
+  // Global dedup: same content hash to same chat within window
   const existing = db.prepare(`
     SELECT id FROM notification_log
     WHERE content_hash = ? AND chat_jid = ? AND sent_at > ? AND suppressed = 0
     LIMIT 1
   `).get(hash, chatJid, cutoff);
 
-  return !!existing;
+  if (existing) return true;
+
+  // Task-level dedup: same task sent same content hash within window (catches slight variations)
+  if (taskId) {
+    const taskDup = db.prepare(`
+      SELECT id FROM notification_log
+      WHERE content_hash = ? AND source = ? AND sent_at > ? AND suppressed = 0
+      LIMIT 1
+    `).get(hash, taskId, cutoff);
+    if (taskDup) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -809,6 +847,75 @@ export function getNotificationStats(hours: number = 24): {
   `).get(cutoff) as { total: number; sent: number; suppressed: number };
 
   return row || { total: 0, sent: 0, suppressed: 0 };
+}
+
+// --- HubSpot sync log ---
+
+export function logHubSpotSync(entry: {
+  lead_id: string;
+  hubspot_contact_id?: string;
+  hubspot_deal_id?: string;
+  action: string;
+  status: string;
+  error?: string;
+}): void {
+  db.prepare(`
+    INSERT INTO hubspot_sync_log (lead_id, hubspot_contact_id, hubspot_deal_id, action, status, synced_at, error)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    entry.lead_id,
+    entry.hubspot_contact_id || null,
+    entry.hubspot_deal_id || null,
+    entry.action,
+    entry.status,
+    new Date().toISOString(),
+    entry.error || null,
+  );
+}
+
+export function getHubSpotSyncStats(): {
+  totalSynced: number;
+  totalErrors: number;
+  lastSync: string | null;
+  byAction: Record<string, number>;
+} {
+  const total = db.prepare(`
+    SELECT
+      SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as synced,
+      SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors
+    FROM hubspot_sync_log
+  `).get() as { synced: number; errors: number } | undefined;
+
+  const lastRow = db.prepare(`
+    SELECT synced_at FROM hubspot_sync_log WHERE status = 'success' ORDER BY synced_at DESC LIMIT 1
+  `).get() as { synced_at: string } | undefined;
+
+  const actionRows = db.prepare(`
+    SELECT action, COUNT(*) as count FROM hubspot_sync_log WHERE status = 'success' GROUP BY action
+  `).all() as Array<{ action: string; count: number }>;
+
+  const byAction: Record<string, number> = {};
+  for (const row of actionRows) {
+    byAction[row.action] = row.count;
+  }
+
+  return {
+    totalSynced: total?.synced || 0,
+    totalErrors: total?.errors || 0,
+    lastSync: lastRow?.synced_at || null,
+    byAction,
+  };
+}
+
+export function getUnsyncedLeads(): Array<{ lead_id: string }> {
+  // Returns lead IDs that have never been successfully synced
+  return db.prepare(`
+    SELECT DISTINCT lead_id FROM hubspot_sync_log
+    WHERE status = 'error'
+      AND lead_id NOT IN (
+        SELECT lead_id FROM hubspot_sync_log WHERE status = 'success'
+      )
+  `).all() as Array<{ lead_id: string }>;
 }
 
 // --- JSON migration ---

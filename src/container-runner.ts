@@ -197,7 +197,7 @@ function buildVolumeMounts(
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
       const envContent = fs.readFileSync(envFile, 'utf-8');
-      const mainOnlyVars = ['PARALLEL_API_KEY', 'N8N_API_KEY', 'RENTCAST_API_KEY'];
+      const mainOnlyVars = ['PARALLEL_API_KEY', 'N8N_API_KEY', 'RENTCAST_API_KEY', 'HUBSPOT_TOKEN'];
       for (const line of envContent.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) continue;
@@ -249,7 +249,7 @@ function buildVolumeMounts(
       });
     }
     // Mount all nanoclaw service configs
-    const configDirs = ['vps', 'proposals', 'github', 'slack', 'calendar', 'n8n', 'job-boards', 'linkedin', 'property'];
+    const configDirs = ['vps', 'proposals', 'github', 'slack', 'calendar', 'n8n', 'job-boards', 'linkedin', 'property', 'hubspot'];
     for (const dir of configDirs) {
       const configPath = path.join(homeDir, `.nanoclaw-${dir}`);
       if (fs.existsSync(configPath)) {

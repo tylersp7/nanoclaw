@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
+    "@hubspot/api-client": "^13.4.0",
     "@octokit/rest": "^22.0.1",
     "@slack/web-api": "^7.14.0",
     "@types/ssh2": "^1.15.5",

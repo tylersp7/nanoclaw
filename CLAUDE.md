@@ -47,6 +47,7 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/add-portfolio-pipeline` | ✅ **NEW** Portfolio auto-update: GitHub activity → highlights → portfolio files → LinkedIn draft |
 | `/add-property-monitor` | ✅ **NEW** Weekly property value/rent monitoring via RentCast API (free tier) |
 | `/add-life-system` | ✅ **NEW** Personal life OS: daily accountability loop + deep work reminders |
+| `/add-hubspot-crm` | ✅ **NEW** HubSpot CRM integration: lead sync, deal tracking, fast-fail token validation |
 
 **Lead Generation & Freelance:**
 - `LEAD_GEN_QUICK_START.md` - Complete 30-day freelance launch plan
