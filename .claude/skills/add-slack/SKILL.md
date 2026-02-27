@@ -1,780 +1,227 @@
 ---
 name: add-slack
-description: Add Slack integration to NanoClaw. Can be configured as a tool (agent reads messages when triggered from WhatsApp), monitor mode (periodic channel checks with alerts), or interactive mode (agent can post and react). Perfect for monitoring VPS events from BeastMode and Auto Blogger.
+description: Add Slack as a channel. Can replace WhatsApp entirely or run alongside it. Uses Socket Mode (no public URL needed).
 ---
 
-# Add Slack Integration
+# Add Slack Channel
 
-This skill adds Slack capabilities to NanoClaw for monitoring VPS alerts and events. It can be configured in three modes:
+This skill adds Slack support to NanoClaw using the skills engine for deterministic code changes, then walks through interactive setup.
 
-1. **Tool Mode** - Agent can read Slack messages/channels when asked from WhatsApp
-2. **Monitor Mode** - Agent periodically checks channels and alerts you about important events
-3. **Interactive Mode** - Agent can post messages and react (full two-way communication)
+## Phase 1: Pre-flight
 
-## Initial Questions
+### Check if already applied
 
-Ask the user:
+Read `.nanoclaw/state.yaml`. If `slack` is in `applied_skills`, skip to Phase 3 (Setup). The code changes are already in place.
 
-> How do you want to use Slack with NanoClaw?
->
-> **Option 1: Tool Mode** (Recommended Start)
-> - Andy reads Slack when you ask (e.g., "@Andy check #bugbounty for critical findings")
-> - No automated polling, only on-demand
-> - Simplest setup
->
-> **Option 2: Monitor Mode** (Best for VPS Monitoring)
-> - Everything in Tool Mode, plus:
-> - Andy automatically checks channels on a schedule
-> - Alerts you via WhatsApp when important events happen
-> - Great for monitoring #bugbounty, #beastmode-alerts, etc.
->
-> **Option 3: Interactive Mode** (Full Control)
-> - Everything in Monitor Mode, plus:
-> - Andy can post messages to Slack
-> - Can react with emojis, create threads
-> - Two-way communication with your team
+### Ask the user
 
-Store their choice and proceed to the appropriate section.
+1. **Mode**: Replace WhatsApp or add alongside it?
+   - Replace → will set `SLACK_ONLY=true`
+   - Alongside → both channels active (default)
 
----
+2. **Do they already have a Slack app configured?** If yes, collect the Bot Token and App Token now. If no, we'll create one in Phase 3.
 
-## Prerequisites (All Modes)
+## Phase 2: Apply Code Changes
 
-### 1. Check Existing Slack Setup
+Run the skills engine to apply this skill's code package. The package files are in this directory alongside this SKILL.md.
 
-First, check if Slack is already configured:
+### Initialize skills system (if needed)
+
+If `.nanoclaw/` directory doesn't exist yet:
 
 ```bash
-ls -la ~/.nanoclaw-slack/ 2>/dev/null || echo "No Slack config found"
+npx tsx scripts/apply-skill.ts --init
 ```
 
-If `slack-credentials.json` exists, skip to "Verify Slack Access" below.
+Or call `initSkillsSystem()` from `skills-engine/migrate.ts`.
 
-### 2. Create Slack Config Directory
+### Apply the skill
 
 ```bash
-mkdir -p ~/.nanoclaw-slack
-chmod 700 ~/.nanoclaw-slack
+npx tsx scripts/apply-skill.ts .claude/skills/add-slack
 ```
 
-### 3. Slack App Setup
+This deterministically:
+- Adds `src/channels/slack.ts` (SlackChannel class implementing Channel interface)
+- Adds `src/channels/slack.test.ts` (46 unit tests)
+- Three-way merges Slack support into `src/index.ts` (multi-channel support, conditional channel creation)
+- Three-way merges Slack config into `src/config.ts` (SLACK_ONLY export)
+- Three-way merges updated routing tests into `src/routing.test.ts`
+- Installs the `@slack/bolt` npm dependency
+- Updates `.env.example` with `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, and `SLACK_ONLY`
+- Records the application in `.nanoclaw/state.yaml`
 
-**USER ACTION REQUIRED**
+If the apply reports merge conflicts, read the intent files:
+- `modify/src/index.ts.intent.md` — what changed and invariants for index.ts
+- `modify/src/config.ts.intent.md` — what changed for config.ts
+- `modify/src/routing.test.ts.intent.md` — what changed for routing tests
+
+### Validate code changes
+
+```bash
+npm test
+npm run build
+```
+
+All tests must pass (including the new slack tests) and build must be clean before proceeding.
+
+## Phase 3: Setup
+
+### Create Slack App (if needed)
+
+If the user doesn't have a Slack app, share [SLACK_SETUP.md](SLACK_SETUP.md) which has step-by-step instructions with screenshots guidance, troubleshooting, and a token reference table.
+
+Quick summary of what's needed:
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Enable Socket Mode and generate an App-Level Token (`xapp-...`)
+3. Subscribe to bot events: `message.channels`, `message.groups`, `message.im`
+4. Add OAuth scopes: `chat:write`, `channels:history`, `groups:history`, `im:history`, `channels:read`, `groups:read`, `users:read`
+5. Install to workspace and copy the Bot Token (`xoxb-...`)
+
+Wait for the user to provide both tokens.
+
+### Configure environment
+
+Add to `.env`:
+
+```bash
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+```
+
+If they chose to replace WhatsApp:
+
+```bash
+SLACK_ONLY=true
+```
+
+Sync to container environment:
+
+```bash
+mkdir -p data/env && cp .env data/env/env
+```
+
+The container reads environment from `data/env/env`, not `.env` directly.
+
+### Build and restart
+
+```bash
+npm run build
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+```
+
+## Phase 4: Registration
+
+### Get Channel ID
 
 Tell the user:
 
-> I need you to create a Slack app and get the credentials. I'll walk you through it:
+> 1. Add the bot to a Slack channel (right-click channel → **View channel details** → **Integrations** → **Add apps**)
+> 2. In that channel, the channel ID is in the URL when you open it in a browser: `https://app.slack.com/client/T.../C0123456789` — the `C...` part is the channel ID
+> 3. Alternatively, right-click the channel name → **Copy link** — the channel ID is the last path segment
 >
-> 1. Open https://api.slack.com/apps in your browser
-> 2. Click **Create New App**
-> 3. Choose **From scratch**
-> 4. App Name: **NanoClaw** (or anything you prefer)
-> 5. Workspace: Select your workspace (where BeastMode/Auto Blogger alerts go)
-> 6. Click **Create App**
+> The JID format for NanoClaw is: `slack:C0123456789`
 
-Wait for user confirmation, then continue:
+Wait for the user to provide the channel ID.
 
-> 7. Now we need to add permissions. In the left sidebar, click **OAuth & Permissions**
-> 8. Scroll down to **Scopes** → **Bot Token Scopes**
-> 9. Add these scopes (click **Add an OAuth Scope** for each):
+### Register the channel
 
-For **Tool Mode**, add:
-```
-channels:history    - Read messages from public channels
-channels:read       - View basic channel info
-groups:history      - Read messages from private channels (optional)
-groups:read         - View private channel info (optional)
-users:read          - Get user information
-```
+Use the IPC register flow or register directly. The channel ID, name, and folder name are needed.
 
-For **Monitor Mode**, add the same as Tool Mode plus:
-```
-chat:write          - Send messages (for alerts/summaries)
-```
-
-For **Interactive Mode**, add all of the above plus:
-```
-reactions:write     - Add emoji reactions
-reactions:read      - View emoji reactions
-files:read          - Read file info (if monitoring file uploads)
-```
-
-Wait for user confirmation, then continue:
-
-> 10. Scroll to the top of the **OAuth & Permissions** page
-> 11. Click **Install to Workspace**
-> 12. Click **Allow**
-> 13. You'll see a **Bot User OAuth Token** that starts with `xoxb-`
-> 14. Copy this token (click **Copy**)
-
-Wait for user to paste the token, then save it:
-
-```bash
-cat > ~/.nanoclaw-slack/slack-credentials.json << 'EOF'
-{
-  "botToken": "PASTE_TOKEN_HERE",
-  "mode": "tool",
-  "workspace": "your-workspace-name"
-}
-EOF
-chmod 600 ~/.nanoclaw-slack/slack-credentials.json
-```
-
-Replace `PASTE_TOKEN_HERE` with the token user provided, and set the mode appropriately.
-
-### 4. Invite Bot to Channels
-
-**USER ACTION REQUIRED**
-
-Tell the user:
-
-> Now invite the NanoClaw bot to the channels you want it to monitor:
->
-> 1. Open Slack and go to each channel (#bugbounty, #beastmode-alerts, etc.)
-> 2. Click the channel name at the top
-> 3. Click **Integrations**
-> 4. Click **Add apps**
-> 5. Find **NanoClaw** and click **Add**
->
-> Which channels did you add the bot to? (e.g., #bugbounty, #beastmode-alerts, #asm-alerts)
-
-Store the channel list for later configuration.
-
----
-
-## Installation
-
-### 1. Install Slack SDK
-
-```bash
-cd /Users/tyler/dev/nanoclaw
-npm install @slack/web-api
-```
-
-### 2. Create Slack Helper Module
-
-Create the Slack integration module:
+For a main channel (responds to all messages, uses the `main` folder):
 
 ```typescript
-// src/slack-helper.ts
-import { WebClient } from '@slack/web-api';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
-
-interface SlackCredentials {
-  botToken: string;
-  mode: 'tool' | 'monitor' | 'interactive';
-  workspace: string;
-}
-
-let slackClient: WebClient | null = null;
-let credentials: SlackCredentials | null = null;
-
-function loadCredentials(): SlackCredentials {
-  if (credentials) return credentials;
-
-  const credPath = path.join(os.homedir(), '.nanoclaw-slack', 'slack-credentials.json');
-  if (!fs.existsSync(credPath)) {
-    throw new Error('Slack credentials not found. Run /add-slack to set up.');
-  }
-
-  credentials = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
-  return credentials;
-}
-
-function getClient(): WebClient {
-  if (slackClient) return slackClient;
-
-  const creds = loadCredentials();
-  slackClient = new WebClient(creds.botToken);
-  return slackClient;
-}
-
-export interface SlackMessage {
-  user: string;
-  username?: string;
-  text: string;
-  timestamp: string;
-  channel: string;
-  channelName?: string;
-  thread_ts?: string;
-  reactions?: Array<{ name: string; count: number }>;
-}
-
-/**
- * Get messages from a Slack channel
- */
-export async function getChannelMessages(
-  channelName: string,
-  limit: number = 50,
-  oldest?: string
-): Promise<SlackMessage[]> {
-  const client = getClient();
-
-  // Convert channel name to ID
-  const channelId = await getChannelId(channelName);
-  if (!channelId) {
-    throw new Error(`Channel ${channelName} not found or bot not invited`);
-  }
-
-  const result = await client.conversations.history({
-    channel: channelId,
-    limit,
-    oldest,
-  });
-
-  if (!result.ok || !result.messages) {
-    throw new Error(`Failed to fetch messages: ${result.error}`);
-  }
-
-  // Get user info for better display names
-  const messages: SlackMessage[] = [];
-  for (const msg of result.messages) {
-    let username = msg.user;
-    if (msg.user) {
-      try {
-        const userInfo = await client.users.info({ user: msg.user });
-        username = userInfo.user?.real_name || userInfo.user?.name || msg.user;
-      } catch (e) {
-        // Ignore user info errors
-      }
-    }
-
-    messages.push({
-      user: msg.user || 'unknown',
-      username,
-      text: msg.text || '',
-      timestamp: msg.ts || '',
-      channel: channelId,
-      channelName,
-      thread_ts: msg.thread_ts,
-      reactions: msg.reactions as Array<{ name: string; count: number }> | undefined,
-    });
-  }
-
-  return messages;
-}
-
-/**
- * Get channel ID from name
- */
-async function getChannelId(channelName: string): Promise<string | null> {
-  const client = getClient();
-
-  // Remove # if present
-  const name = channelName.replace(/^#/, '');
-
-  // Try public channels first
-  const publicResult = await client.conversations.list({
-    types: 'public_channel',
-    limit: 1000,
-  });
-
-  const publicChannel = publicResult.channels?.find(
-    (c) => c.name === name || c.id === name
-  );
-  if (publicChannel) return publicChannel.id!;
-
-  // Try private channels
-  const privateResult = await client.conversations.list({
-    types: 'private_channel',
-    limit: 1000,
-  });
-
-  const privateChannel = privateResult.channels?.find(
-    (c) => c.name === name || c.id === name
-  );
-  if (privateChannel) return privateChannel.id!;
-
-  return null;
-}
-
-/**
- * List all channels the bot has access to
- */
-export async function listChannels(): Promise<Array<{ id: string; name: string; isMember: boolean }>> {
-  const client = getClient();
-
-  const result = await client.conversations.list({
-    types: 'public_channel,private_channel',
-    limit: 1000,
-  });
-
-  if (!result.ok || !result.channels) {
-    throw new Error(`Failed to list channels: ${result.error}`);
-  }
-
-  return result.channels.map((c) => ({
-    id: c.id!,
-    name: c.name!,
-    isMember: c.is_member || false,
-  }));
-}
-
-/**
- * Search for messages matching a query
- */
-export async function searchMessages(
-  query: string,
-  channelName?: string
-): Promise<SlackMessage[]> {
-  const client = getClient();
-
-  let searchQuery = query;
-  if (channelName) {
-    searchQuery = `in:${channelName.replace(/^#/, '')} ${query}`;
-  }
-
-  const result = await client.search.messages({
-    query: searchQuery,
-    count: 50,
-  });
-
-  if (!result.ok || !result.messages?.matches) {
-    throw new Error(`Search failed: ${result.error}`);
-  }
-
-  return result.messages.matches.map((msg: any) => ({
-    user: msg.user || 'unknown',
-    username: msg.username,
-    text: msg.text || '',
-    timestamp: msg.ts || '',
-    channel: msg.channel?.id || '',
-    channelName: msg.channel?.name,
-  }));
-}
-
-/**
- * Get messages since a specific timestamp
- */
-export async function getMessagesSince(
-  channelName: string,
-  sinceTimestamp: string
-): Promise<SlackMessage[]> {
-  return getChannelMessages(channelName, 100, sinceTimestamp);
-}
-
-/**
- * Post a message to a channel (Monitor/Interactive mode)
- */
-export async function postMessage(
-  channelName: string,
-  text: string,
-  threadTs?: string
-): Promise<void> {
-  const creds = loadCredentials();
-  if (creds.mode === 'tool') {
-    throw new Error('Posting messages requires Monitor or Interactive mode');
-  }
-
-  const client = getClient();
-  const channelId = await getChannelId(channelName);
-
-  if (!channelId) {
-    throw new Error(`Channel ${channelName} not found`);
-  }
-
-  await client.chat.postMessage({
-    channel: channelId,
-    text,
-    thread_ts: threadTs,
-  });
-}
-
-/**
- * Add a reaction to a message (Interactive mode)
- */
-export async function addReaction(
-  channelName: string,
-  timestamp: string,
-  emoji: string
-): Promise<void> {
-  const creds = loadCredentials();
-  if (creds.mode !== 'interactive') {
-    throw new Error('Reactions require Interactive mode');
-  }
-
-  const client = getClient();
-  const channelId = await getChannelId(channelName);
-
-  if (!channelId) {
-    throw new Error(`Channel ${channelName} not found`);
-  }
-
-  await client.reactions.add({
-    channel: channelId,
-    timestamp,
-    name: emoji.replace(/:/g, ''), // Remove colons if present
-  });
-}
-
-/**
- * Filter messages by severity keywords (for VPS monitoring)
- */
-export function filterBySeverity(
-  messages: SlackMessage[],
-  severities: string[] = ['critical', 'high', 'error', 'failed']
-): SlackMessage[] {
-  const keywords = severities.map((s) => s.toLowerCase());
-  return messages.filter((msg) =>
-    keywords.some((keyword) => msg.text.toLowerCase().includes(keyword))
-  );
-}
-
-/**
- * Format messages for WhatsApp display
- */
-export function formatMessagesForWhatsApp(messages: SlackMessage[]): string {
-  if (messages.length === 0) return 'No messages found.';
-
-  return messages
-    .map((msg, i) => {
-      const time = new Date(parseFloat(msg.timestamp) * 1000).toLocaleString();
-      const reactions = msg.reactions
-        ? ` [${msg.reactions.map((r) => `${r.name}:${r.count}`).join(', ')}]`
-        : '';
-      return `${i + 1}. *${msg.username || msg.user}* (${time})${reactions}\n   ${msg.text.substring(0, 200)}${msg.text.length > 200 ? '...' : ''}`;
-    })
-    .join('\n\n');
-}
+registerGroup("slack:<channel-id>", {
+  name: "<channel-name>",
+  folder: "main",
+  trigger: `@${ASSISTANT_NAME}`,
+  added_at: new Date().toISOString(),
+  requiresTrigger: false,
+});
 ```
 
-Save this to `src/slack-helper.ts`.
+For additional channels (trigger-only):
 
-### 3. Export Slack Helper
-
-Add to `src/index.ts` or create an exports file. The helper will be available for container agents to use.
-
-### 4. Add Slack Tools to Container
-
-Create a wrapper script that agents can call:
-
-```bash
-cat > /Users/tyler/dev/nanoclaw/container/tools/slack-reader.sh << 'EOF'
-#!/bin/bash
-# Slack reading tool for NanoClaw agents
-# Usage: slack-reader.sh <command> [args...]
-
-NANOCLAW_DIR="/workspace/project"
-
-case "$1" in
-  list-channels)
-    node -e "
-    const { listChannels } = require('$NANOCLAW_DIR/dist/slack-helper.js');
-    listChannels().then(channels => {
-      console.log('Available Slack channels:');
-      channels.forEach(c => {
-        console.log(\`  \${c.isMember ? '✓' : ' '} #\${c.name} (\${c.id})\`);
-      });
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  read-channel)
-    CHANNEL="$2"
-    LIMIT="${3:-50}"
-    node -e "
-    const { getChannelMessages, formatMessagesForWhatsApp } = require('$NANOCLAW_DIR/dist/slack-helper.js');
-    getChannelMessages('$CHANNEL', $LIMIT).then(msgs => {
-      console.log(formatMessagesForWhatsApp(msgs));
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  search)
-    QUERY="$2"
-    CHANNEL="$3"
-    node -e "
-    const { searchMessages, formatMessagesForWhatsApp } = require('$NANOCLAW_DIR/dist/slack-helper.js');
-    searchMessages('$QUERY', '$CHANNEL').then(msgs => {
-      console.log(formatMessagesForWhatsApp(msgs));
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  filter-critical)
-    CHANNEL="$2"
-    LIMIT="${3:-100}"
-    node -e "
-    const { getChannelMessages, filterBySeverity, formatMessagesForWhatsApp } = require('$NANOCLAW_DIR/dist/slack-helper.js');
-    getChannelMessages('$CHANNEL', $LIMIT).then(msgs => {
-      const critical = filterBySeverity(msgs, ['critical', 'high', 'error', 'failed', 'alert']);
-      console.log(formatMessagesForWhatsApp(critical));
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  since)
-    CHANNEL="$2"
-    TIMESTAMP="$3"
-    node -e "
-    const { getMessagesSince, formatMessagesForWhatsApp } = require('$NANOCLAW_DIR/dist/slack-helper.js');
-    getMessagesSince('$CHANNEL', '$TIMESTAMP').then(msgs => {
-      console.log(formatMessagesForWhatsApp(msgs));
-    }).catch(err => console.error('Error:', err.message));
-    "
-    ;;
-
-  *)
-    echo "Usage: slack-reader.sh <command> [args]"
-    echo ""
-    echo "Commands:"
-    echo "  list-channels              - List all channels bot has access to"
-    echo "  read-channel <channel> [limit]  - Read messages from channel"
-    echo "  search <query> [channel]   - Search messages"
-    echo "  filter-critical <channel> [limit] - Get only critical/error messages"
-    echo "  since <channel> <timestamp>  - Get messages since timestamp"
-    echo ""
-    echo "Examples:"
-    echo "  slack-reader.sh list-channels"
-    echo "  slack-reader.sh read-channel bugbounty 20"
-    echo "  slack-reader.sh filter-critical beastmode-alerts"
-    echo "  slack-reader.sh search 'critical vulnerability' bugbounty"
-    ;;
-esac
-EOF
-
-chmod +x /Users/tyler/dev/nanoclaw/container/tools/slack-reader.sh
+```typescript
+registerGroup("slack:<channel-id>", {
+  name: "<channel-name>",
+  folder: "<folder-name>",
+  trigger: `@${ASSISTANT_NAME}`,
+  added_at: new Date().toISOString(),
+  requiresTrigger: true,
+});
 ```
 
-### 5. Update Container to Include Slack Tools
+## Phase 5: Verify
 
-The container already mounts `/workspace/project`, so the compiled slack-helper will be available.
-
-Add to `groups/main/CLAUDE.md` (or any group where you want Slack access):
-
-```markdown
-## Slack Integration
-
-You have access to Slack via the `slack-reader.sh` tool:
-
-**List channels:**
-```bash
-/workspace/project/container/tools/slack-reader.sh list-channels
-```
-
-**Read messages from a channel:**
-```bash
-/workspace/project/container/tools/slack-reader.sh read-channel bugbounty 50
-```
-
-**Filter for critical/error messages:**
-```bash
-/workspace/project/container/tools/slack-reader.sh filter-critical beastmode-alerts
-```
-
-**Search for specific content:**
-```bash
-/workspace/project/container/tools/slack-reader.sh search "high severity" bugbounty
-```
-
-Use these tools when the user asks about Slack channels or VPS alerts.
-```
-
-### 6. Rebuild Container
-
-```bash
-cd /Users/tyler/dev/nanoclaw
-npm run build
-./container/build.sh
-```
-
----
-
-## Verification
-
-### Test Slack Access
-
-Test from your terminal first:
-
-```bash
-cd /Users/tyler/dev/nanoclaw
-node -e "
-const { listChannels } = require('./dist/slack-helper.js');
-listChannels().then(channels => {
-  console.log('Available channels:');
-  channels.forEach(c => console.log(\`  \${c.isMember ? '✓' : ' '} #\${c.name}\`));
-}).catch(err => console.error('Error:', err.message));
-"
-```
-
-### Test from WhatsApp
-
-Send to Andy:
-
-```
-@Andy list all Slack channels you have access to
-```
-
-```
-@Andy check the #bugbounty channel and show me the last 10 messages
-```
-
-```
-@Andy search for "critical" in #beastmode-alerts
-```
-
----
-
-## Monitor Mode Setup
-
-If user chose Monitor Mode, create scheduled tasks:
-
-### 1. Critical Findings Monitor
-
-```
-@Andy every hour, check #bugbounty Slack channel for any messages containing "critical" or "high" from the past hour. If any are found, send me a WhatsApp alert with a summary.
-```
-
-### 2. Error Alert Monitor
-
-```
-@Andy every 30 minutes, check #beastmode-alerts for any messages containing "error" or "failed" from the past 30 minutes. Alert me immediately if any are found.
-```
-
-### 3. Daily Digest
-
-```
-@Andy every day at 6pm, read all messages from #bugbounty, #beastmode-alerts, and #asm-alerts since 8am. Summarize the activity and send me a digest of important events.
-```
-
-### 4. Weekend Summary
-
-```
-@Andy every Monday at 9am, check #bugbounty for any messages from the weekend (since Friday 5pm). Summarize any findings so I'm caught up for the week.
-```
-
----
-
-## Interactive Mode Setup
-
-If user chose Interactive Mode, add posting capabilities:
+### Test the connection
 
 Tell the user:
 
-> In Interactive Mode, Andy can also post to Slack. Here are some examples:
+> Send a message in your registered Slack channel:
+> - For main channel: Any message works
+> - For non-main: `@<assistant-name> hello` (using the configured trigger word)
 >
-> ```
-> @Andy post a message to #bugbounty saying "Reviewing this week's findings, will respond by EOD"
-> ```
->
-> ```
-> @Andy add a :eyes: reaction to the most recent critical finding in #bugbounty
-> ```
->
-> Andy can also auto-acknowledge findings:
-> ```
-> @Andy when you see a new critical or high severity finding in #bugbounty, automatically react with :eyes: emoji so the team knows I've seen it
-> ```
+> The bot should respond within a few seconds.
 
----
+### Check logs if needed
+
+```bash
+tail -f logs/nanoclaw.log
+```
 
 ## Troubleshooting
 
-### Bot Not in Channel
+### Bot not responding
 
-If you get "Channel not found" errors:
+1. Check `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set in `.env` AND synced to `data/env/env`
+2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'slack:%'"`
+3. For non-main channels: message must include trigger pattern
+4. Service is running: `launchctl list | grep nanoclaw`
 
-1. Open Slack
-2. Go to the channel
-3. Type `/invite @NanoClaw`
-4. Or: Channel settings → Integrations → Add apps → NanoClaw
+### Bot connected but not receiving messages
 
-### Permission Errors
+1. Verify Socket Mode is enabled in the Slack app settings
+2. Verify the bot is subscribed to the correct events (`message.channels`, `message.groups`, `message.im`)
+3. Verify the bot has been added to the channel
+4. Check that the bot has the required OAuth scopes
 
-If you get "missing_scope" errors:
+### Bot not seeing messages in channels
 
-1. Go back to https://api.slack.com/apps
-2. Click your NanoClaw app
-3. OAuth & Permissions → Scopes
-4. Add the missing scope mentioned in the error
-5. Reinstall the app to workspace
+By default, bots only see messages in channels they've been explicitly added to. Make sure to:
+1. Add the bot to each channel you want it to monitor
+2. Check the bot has `channels:history` and/or `groups:history` scopes
 
-### Messages Not Loading
+### "missing_scope" errors
 
-Check the timestamp format. Slack uses Unix timestamps:
+If the bot logs `missing_scope` errors:
+1. Go to **OAuth & Permissions** in your Slack app settings
+2. Add the missing scope listed in the error message
+3. **Reinstall the app** to your workspace — scope changes require reinstallation
+4. Copy the new Bot Token (it changes on reinstall) and update `.env`
+5. Sync: `mkdir -p data/env && cp .env data/env/env`
+6. Restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 
-```bash
-# Get current timestamp
-date +%s
+### Getting channel ID
 
-# Use in commands
-slack-reader.sh since bugbounty 1707552000
-```
+If the channel ID is hard to find:
+- In Slack desktop: right-click channel → **Copy link** → extract the `C...` ID from the URL
+- In Slack web: the URL shows `https://app.slack.com/client/TXXXXXXX/C0123456789`
+- Via API: `curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" "https://slack.com/api/conversations.list" | jq '.channels[] | {id, name}'`
 
----
+## After Setup
 
-## Example VPS Monitoring Tasks
+The Slack channel supports:
+- **Public channels** — Bot must be added to the channel
+- **Private channels** — Bot must be invited to the channel
+- **Direct messages** — Users can DM the bot directly
+- **Multi-channel** — Can run alongside WhatsApp (default) or replace it (`SLACK_ONLY=true`)
 
-Here are complete tasks tailored for your VPS setup:
+## Known Limitations
 
-### BeastMode Findings Monitor
-
-```
-@Andy every 2 hours, check the #bugbounty Slack channel for any new findings. Filter for messages containing "critical", "high", "xss", "sql injection", or "rce". If any are found, send me a WhatsApp message with details including the URL, severity, and a brief description.
-```
-
-### Error Correlation
-
-```
-@Andy every 4 hours, check both #beastmode-alerts Slack channel and SSH into beastmode-vps-ts to check /opt/bugbounty/logs/ for errors. If you find errors in both Slack and the logs, correlate them and let me know if there's a pattern or if manual intervention is needed.
-```
-
-### Daily Security Brief
-
-```
-@Andy every day at 7am, check #bugbounty, #beastmode-alerts, and #asm-alerts for all activity from the past 24 hours. Create a brief security summary including: number of new findings, any critical issues, scan completion status, and recommended actions. Send this as a morning briefing.
-```
-
-### Weekend Coverage
-
-```
-@Andy every Saturday and Sunday at noon, check #bugbounty and #beastmode-alerts for any new messages since the last check. If there are any critical or high severity items, alert me immediately via WhatsApp. Otherwise, just keep track and summarize everything Monday morning.
-```
-
----
-
-## Configuration Storage
-
-Slack configuration is stored in:
-- **Credentials:** `~/.nanoclaw-slack/slack-credentials.json`
-- **Last check timestamps:** Managed by scheduled tasks in NanoClaw DB
-
-To update mode or credentials:
-
-```bash
-nano ~/.nanoclaw-slack/slack-credentials.json
-```
-
----
-
-## Success Criteria
-
-✅ Bot installed in Slack workspace
-✅ Bot invited to relevant channels
-✅ Can list channels from Andy
-✅ Can read messages from Andy
-✅ Can search messages from Andy
-✅ (Monitor Mode) Scheduled checks running
-✅ (Interactive Mode) Can post messages
-
----
-
-## Next Steps
-
-1. Test the integration with a few channels
-2. Set up 2-3 monitoring tasks for your most important channels
-3. Adjust alert thresholds based on noise levels
-4. Consider adding custom filters for your specific VPS events
-
-Tell the user:
-
-> Slack integration complete! 🎉
->
-> Andy can now monitor your VPS alerts from Slack. Try asking:
-> - "@Andy check #bugbounty for critical findings"
-> - "@Andy what happened in #beastmode-alerts today?"
-> - "@Andy search for 'xss' in #bugbounty"
->
-> Ready to set up monitoring tasks? I can help you create scheduled checks for your VPS channels!
+- **Threads are flattened** — Threaded replies are delivered to the agent as regular channel messages. The agent sees them but has no awareness they originated in a thread. Responses always go to the channel, not back into the thread. Users in a thread will need to check the main channel for the bot's reply. Full thread-aware routing (respond in-thread) requires pipeline-wide changes: database schema, `NewMessage` type, `Channel.sendMessage` interface, and routing logic.
+- **No typing indicator** — Slack's Bot API does not expose a typing indicator endpoint. The `setTyping()` method is a no-op. Users won't see "bot is typing..." while the agent works.
+- **Message splitting is naive** — Long messages are split at a fixed 4000-character boundary, which may break mid-word or mid-sentence. A smarter split (on paragraph or sentence boundaries) would improve readability.
+- **No file/image handling** — The bot only processes text content. File uploads, images, and rich message blocks are not forwarded to the agent.
+- **Channel metadata sync is unbounded** — `syncChannelMetadata()` paginates through all channels the bot is a member of, but has no upper bound or timeout. Workspaces with thousands of channels may experience slow startup.
+- **Workspace admin policies not detected** — If the Slack workspace restricts bot app installation, the setup will fail at the "Install to Workspace" step with no programmatic detection or guidance. See SLACK_SETUP.md troubleshooting section.

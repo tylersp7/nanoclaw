@@ -161,4 +161,10 @@ export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
 // channels that sync names separately (WhatsApp syncGroupMetadata) omit it.
 // channel identifies the source channel (e.g. 'whatsapp', 'telegram').
 // isGroup indicates whether this is a group chat.
-export type OnChatMetadata = (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) => void;
+export type OnChatMetadata = (
+  chatJid: string,
+  timestamp: string,
+  name?: string,
+  channel?: string,
+  isGroup?: boolean,
+) => void;

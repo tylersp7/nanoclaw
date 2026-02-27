@@ -1,9 +1,9 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
-import path from 'path';
 
 import {
+  ASSISTANT_NAME,
   CONTAINER_POOL_ENABLED,
   GROUPS_DIR,
   IDLE_TIMEOUT,
@@ -29,11 +29,13 @@ import {
   markFollowUpCompleted,
   markFollowUpError,
   markFollowUpProcessing,
+  updateTask,
   updateTaskAfterRun,
 } from './db.js';
 import { detectAndQueueFollowUps } from './follow-up-detector.js';
 import { isConfigured as isSheetsConfigured, logAlertToSheet, flushSheetLogs } from './sheets-logger.js';
 import { GroupQueue } from './group-queue.js';
+import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { NotificationBatcher } from './notification-batcher.js';
 import { runPipeline } from './pipeline-runner.js';
@@ -87,7 +89,12 @@ export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
-  onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
+  onProcess: (
+    groupJid: string,
+    proc: ChildProcess,
+    containerName: string,
+    groupFolder: string,
+  ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
 }
 
@@ -112,7 +119,27 @@ async function runTask(
   }
 
   const startTime = Date.now();
-  const groupDir = path.join(GROUPS_DIR, task.group_folder);
+  let groupDir: string;
+  try {
+    groupDir = resolveGroupFolderPath(task.group_folder);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    // Stop retry churn for malformed legacy rows.
+    updateTask(task.id, { status: 'paused' });
+    logger.error(
+      { taskId: task.id, groupFolder: task.group_folder, error },
+      'Task has invalid group folder',
+    );
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: 'error',
+      result: null,
+      error,
+    });
+    return;
+  }
   fs.mkdirSync(groupDir, { recursive: true });
 
   logger.info(
@@ -166,8 +193,11 @@ async function runTask(
   const sessionId =
     task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
 
-  // Idle timer: writes _close sentinel after IDLE_TIMEOUT of no output,
-  // so the container exits instead of hanging at waitForIpcMessage forever.
+  // After the task produces a result, close the container promptly.
+  // Tasks are single-turn — no need to wait IDLE_TIMEOUT (30 min) for the
+  // query loop to time out. A short delay handles any final MCP calls.
+  const TASK_CLOSE_DELAY_MS = 10000;
+  let closeTimer: ReturnType<typeof setTimeout> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Scheduled tasks finish quickly (2-5 min) — use a shorter idle timeout
@@ -196,6 +226,7 @@ async function runTask(
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
+        assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) => deps.onProcess(queueKey, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
@@ -240,7 +271,7 @@ async function runTask(
       },
     );
 
-    if (idleTimer) clearTimeout(idleTimer);
+    if (closeTimer) clearTimeout(closeTimer);
 
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
@@ -254,7 +285,7 @@ async function runTask(
       'Task completed',
     );
   } catch (err) {
-    if (idleTimer) clearTimeout(idleTimer);
+    if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
@@ -428,4 +459,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   };
 
   loop();
+}
+
+/** @internal - for tests only. */
+export function _resetSchedulerLoopForTests(): void {
+  schedulerRunning = false;
 }
