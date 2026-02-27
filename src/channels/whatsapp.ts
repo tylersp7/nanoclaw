@@ -7,6 +7,7 @@ import makeWASocket, {
   DisconnectReason,
   WASocket,
   downloadMediaMessage,
+  fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -37,6 +38,8 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
+  private reconnectAttempts = 0;
+  private static readonly MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000; // 5 minutes max
 
   private opts: WhatsAppChannelOpts;
 
@@ -56,27 +59,66 @@ export class WhatsAppChannel implements Channel {
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
+    const needsAuth = !state.creds.registered;
+    let pairingCodeRequested = false;
+
+    // Auto-fetch latest WhatsApp Web version, fallback to known-good version
+    const FALLBACK_VERSION: [number, number, number] = [2, 3000, 1034183557];
+    let waVersion: [number, number, number] = FALLBACK_VERSION;
+    try {
+      const { version, isLatest, error } = await fetchLatestWaWebVersion();
+      if (isLatest && version) {
+        waVersion = version as [number, number, number];
+        logger.info({ version: waVersion }, 'Fetched latest WA Web version');
+      } else {
+        logger.warn({ error, fallback: FALLBACK_VERSION }, 'Could not fetch latest WA version, using fallback');
+      }
+    } catch (err) {
+      logger.warn({ err, fallback: FALLBACK_VERSION }, 'Failed to fetch WA version, using fallback');
+    }
+
     this.sock = makeWASocket({
+      version: waVersion,
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
       },
-      printQRInTerminal: false,
       logger,
-      browser: Browsers.macOS('Chrome'),
+      browser: Browsers.macOS('Safari'),
     });
 
     this.sock.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      if (qr) {
-        const msg =
-          'WhatsApp authentication required. Run /setup in Claude Code.';
+      // Request pairing code when QR is offered (socket is ready for auth)
+      if (qr && needsAuth && !pairingCodeRequested) {
+        pairingCodeRequested = true;
+        const phoneNumber = typeof ASSISTANT_HAS_OWN_NUMBER === 'string' ? ASSISTANT_HAS_OWN_NUMBER : '19706923038';
+        logger.info({ phoneNumber }, 'Requesting pairing code instead of QR');
+        this.sock.requestPairingCode(phoneNumber).then((code) => {
+          const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+          logger.info({ code: formattedCode }, 'PAIRING CODE — enter in WhatsApp > Linked Devices > Link with phone number');
+          exec(
+            `osascript -e 'display dialog "WhatsApp Pairing Code: ${formattedCode}\\n\\nOpen WhatsApp on phone > Linked Devices > Link a Device > Link with phone number instead" with title "NanoClaw" buttons {"OK"} default button "OK"'`,
+          );
+          fs.writeFileSync('/tmp/nanoclaw-pairing-code.txt', `${formattedCode}\n`);
+        }).catch((err) => {
+          logger.error({ err }, 'Failed to request pairing code, falling back to QR');
+          // Fall back to QR code
+          import('qrcode').then(m => {
+            const qrPath = '/tmp/nanoclaw-qr.png';
+            m.default.toFile(qrPath, qr, { scale: 8 }, () => {
+              exec(`open "${qrPath}"`);
+            });
+          }).catch(() => {});
+        });
+      } else if (qr && !needsAuth) {
+        // Already registered but session expired — show QR
+        const msg = 'WhatsApp re-authentication required.';
         logger.error(msg);
         exec(
           `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
         );
-        // Save QR as image for scanning
         import('qrcode').then(m => {
           const qrPath = '/tmp/nanoclaw-qr.png';
           m.default.toFile(qrPath, qr, { scale: 8 }, () => {
@@ -92,21 +134,28 @@ export class WhatsAppChannel implements Channel {
         logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
 
         if (shouldReconnect) {
-          logger.info('Reconnecting...');
-          this.connectInternal().catch((err) => {
-            logger.error({ err }, 'Failed to reconnect, retrying in 5s');
-            setTimeout(() => {
-              this.connectInternal().catch((err2) => {
-                logger.error({ err: err2 }, 'Reconnection retry failed');
-              });
-            }, 5000);
-          });
+          this.reconnectAttempts++;
+          // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s, ... capped at 5 min
+          const baseDelay = Math.min(
+            2000 * Math.pow(2, this.reconnectAttempts - 1),
+            WhatsAppChannel.MAX_RECONNECT_DELAY_MS
+          );
+          // Add jitter (±25%) to prevent thundering herd
+          const jitter = baseDelay * 0.25 * (Math.random() * 2 - 1);
+          const delay = Math.round(baseDelay + jitter);
+          logger.info({ attempt: this.reconnectAttempts, delayMs: delay }, `Reconnecting in ${Math.round(delay / 1000)}s...`);
+          setTimeout(() => {
+            this.connectInternal().catch((err) => {
+              logger.error({ err }, 'Reconnection failed');
+            });
+          }, delay);
         } else {
           logger.info('Logged out. Run /setup to re-authenticate.');
           process.exit(0);
         }
       } else if (connection === 'open') {
         this.connected = true;
+        this.reconnectAttempts = 0; // Reset backoff on successful connection
         logger.info('Connected to WhatsApp');
 
         // Mark as unavailable so mobile device receives push notifications
