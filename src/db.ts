@@ -666,9 +666,7 @@ export function getRegisteredGroup(
       : undefined,
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-    destinations: row.destinations
-      ? JSON.parse(row.destinations)
-      : undefined,
+    destinations: row.destinations ? JSON.parse(row.destinations) : undefined,
   };
 }
 
@@ -721,9 +719,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         : undefined,
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-      destinations: row.destinations
-        ? JSON.parse(row.destinations)
-        : undefined,
+      destinations: row.destinations ? JSON.parse(row.destinations) : undefined,
     };
   }
   return result;

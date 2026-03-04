@@ -22,10 +22,7 @@ interface SkillResult {
 }
 
 // Run a skill script as subprocess
-async function runScript(
-  script: string,
-  args: object,
-): Promise<SkillResult> {
+async function runScript(script: string, args: object): Promise<SkillResult> {
   const scriptPath = path.join(
     process.cwd(),
     '.claude',

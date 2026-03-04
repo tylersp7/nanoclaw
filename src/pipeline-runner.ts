@@ -385,7 +385,12 @@ async function executeStep(
             );
           } else {
             logger.warn(
-              { taskId: task.id, step: step.name, qaAttempt, qaOutput: qaOutput.slice(0, 300) },
+              {
+                taskId: task.id,
+                step: step.name,
+                qaAttempt,
+                qaOutput: qaOutput.slice(0, 300),
+              },
               'QA gate failed, retrying step',
             );
 

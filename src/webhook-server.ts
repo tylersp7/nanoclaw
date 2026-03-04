@@ -46,10 +46,7 @@ function verifySignature(
 ): boolean {
   if (!signature) return false;
   const expected = `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
-  return crypto.timingSafeEqual(
-    Buffer.from(expected),
-    Buffer.from(signature),
-  );
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
 /**
@@ -116,7 +113,10 @@ export function startWebhookServer(deps: WebhookDeps): http.Server | null {
       try {
         handleWebhook(deps, groupFolder, body, req.headers, res);
       } catch (err: any) {
-        logger.error({ err: err.message, groupFolder }, 'Webhook handler error');
+        logger.error(
+          { err: err.message, groupFolder },
+          'Webhook handler error',
+        );
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Internal error' }));

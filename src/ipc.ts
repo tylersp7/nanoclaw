@@ -100,7 +100,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup, viaDestination: !!isDestination },
+                    {
+                      chatJid: data.chatJid,
+                      sourceGroup,
+                      viaDestination: !!isDestination,
+                    },
                     'IPC message sent',
                   );
                 } else {
@@ -199,7 +203,11 @@ export async function processTaskIpc(
     // For enable_webhook / X integration
     requestId?: string;
     // For set_destinations
-    destinations?: Array<{ name: string; targetJid: string; description?: string }>;
+    destinations?: Array<{
+      name: string;
+      targetJid: string;
+      description?: string;
+    }>;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -436,7 +444,12 @@ export async function processTaskIpc(
         );
         // Write error result if requestId present
         if (data.requestId) {
-          const resultDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'dest_results');
+          const resultDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'dest_results',
+          );
           fs.mkdirSync(resultDir, { recursive: true });
           fs.writeFileSync(
             path.join(resultDir, `${data.requestId}.json`),
@@ -447,7 +460,10 @@ export async function processTaskIpc(
       }
 
       // Update the group's destinations
-      const updatedGroup = { ...destTargetGroup, destinations: data.destinations };
+      const updatedGroup = {
+        ...destTargetGroup,
+        destinations: data.destinations,
+      };
       deps.registerGroup(data.targetJid, updatedGroup);
       logger.info(
         { targetJid: data.targetJid, count: data.destinations.length },
@@ -456,7 +472,12 @@ export async function processTaskIpc(
 
       // Write success result
       if (data.requestId) {
-        const resultDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'dest_results');
+        const resultDir = path.join(
+          DATA_DIR,
+          'ipc',
+          sourceGroup,
+          'dest_results',
+        );
         fs.mkdirSync(resultDir, { recursive: true });
         fs.writeFileSync(
           path.join(resultDir, `${data.requestId}.json`),
