@@ -7,7 +7,7 @@ import {
   CONTAINER_POOL_ENABLED,
   GROUPS_DIR,
   IDLE_TIMEOUT,
-  MAIN_GROUP_FOLDER,
+
   NOTHING_TO_REPORT_PATTERNS,
   NOTIFICATION_BATCH_MAX,
   NOTIFICATION_BATCH_WINDOW,
@@ -187,7 +187,7 @@ async function runTask(
   }
 
   // Update tasks snapshot for container to read (filtered by group)
-  const isMain = task.group_folder === MAIN_GROUP_FOLDER;
+  const isMain = group.isMain === true;
   const tasks = getAllTasks();
   writeTasksSnapshot(
     task.group_folder,

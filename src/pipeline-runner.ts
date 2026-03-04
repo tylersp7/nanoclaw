@@ -11,12 +11,7 @@ import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import {
-  CONTAINER_TIMEOUT,
-  GROUPS_DIR,
-  IDLE_TIMEOUT,
-  MAIN_GROUP_FOLDER,
-} from './config.js';
+import { CONTAINER_TIMEOUT, GROUPS_DIR, IDLE_TIMEOUT } from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -173,7 +168,7 @@ async function runStep(
   const groupDir = path.join(GROUPS_DIR, task.group_folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const isMain = task.group_folder === MAIN_GROUP_FOLDER;
+  const isMain = group.isMain === true;
   const sessions = deps.getSessions();
   const contextMode = step.context_mode || task.context_mode;
   const sessionId =

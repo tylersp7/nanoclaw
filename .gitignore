@@ -25,6 +25,9 @@ groups/global/*
 # Database files
 *.db
 
+# Temp files
+.tmp-*
+
 # OS
 .DS_Store
 
