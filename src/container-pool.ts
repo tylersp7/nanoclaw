@@ -20,8 +20,8 @@ import { DATA_DIR, CONTAINER_POOL_ENABLED } from './config.js';
 import { logger } from './logger.js';
 
 export interface PoolConfig {
-  maxPrewarmed: number;    // Max pre-prepared groups (default: 2)
-  preloadOnIdle: boolean;  // Pre-prepare during idle periods (default: true)
+  maxPrewarmed: number; // Max pre-prepared groups (default: 2)
+  preloadOnIdle: boolean; // Pre-prepare during idle periods (default: true)
 }
 
 interface CachedGroupState {
@@ -62,7 +62,9 @@ function computeSkillsChecksum(): string | null {
         if (!stat.isDirectory()) continue;
         for (const file of fs.readdirSync(srcDir)) {
           const fileStat = fs.statSync(path.join(srcDir, file));
-          parts.push(`${skillDir}/${file}:${fileStat.size}:${fileStat.mtimeMs}`);
+          parts.push(
+            `${skillDir}/${file}:${fileStat.size}:${fileStat.mtimeMs}`,
+          );
         }
       }
     }
@@ -162,13 +164,20 @@ export class ContainerPool {
     fs.mkdirSync(groupSessionsDir, { recursive: true });
     const settingsFile = path.join(groupSessionsDir, 'settings.json');
     if (!fs.existsSync(settingsFile)) {
-      fs.writeFileSync(settingsFile, JSON.stringify({
-        env: {
-          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-        },
-      }, null, 2) + '\n');
+      fs.writeFileSync(
+        settingsFile,
+        JSON.stringify(
+          {
+            env: {
+              CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+              CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+              CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+            },
+          },
+          null,
+          2,
+        ) + '\n',
+      );
     }
 
     const state = this.getOrCreate(groupFolder);
@@ -238,13 +247,20 @@ export class ContainerPool {
       if (!this.ensureIpcDirs(folder)) didWork = true;
 
       // Pre-create session dirs and settings
-      const groupSessionsDir = path.join(DATA_DIR, 'sessions', folder, '.claude');
+      const groupSessionsDir = path.join(
+        DATA_DIR,
+        'sessions',
+        folder,
+        '.claude',
+      );
       if (!this.ensureSettings(groupSessionsDir, folder)) didWork = true;
 
       // Pre-sync skills
       const checksum = this.getSkillsChecksum();
       if (checksum && !this.areSkillsSynced(folder)) {
-        if (syncSkillsIfNeeded(groupSessionsDir, this.cache.get(folder), checksum)) {
+        if (
+          syncSkillsIfNeeded(groupSessionsDir, this.cache.get(folder), checksum)
+        ) {
           this.markSkillsSynced(folder, checksum);
           didWork = true;
         }

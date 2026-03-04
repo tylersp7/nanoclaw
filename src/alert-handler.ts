@@ -57,14 +57,20 @@ const ALERT_PATTERNS: AlertPattern[] = [
     severity: 'warning',
     category: 'disk',
     action: 'Clean up old logs/images: docker system prune, log rotation',
-    autoRemediate: { server: 'auto', command: 'docker system prune -f && journalctl --vacuum-time=3d' },
+    autoRemediate: {
+      server: 'auto',
+      command: 'docker system prune -f && journalctl --vacuum-time=3d',
+    },
   },
   {
     pattern: /no space left on device/i,
     severity: 'critical',
     category: 'disk',
     action: 'Emergency disk cleanup needed',
-    autoRemediate: { server: 'auto', command: 'docker system prune -f && journalctl --vacuum-time=1d' },
+    autoRemediate: {
+      server: 'auto',
+      command: 'docker system prune -f && journalctl --vacuum-time=1d',
+    },
   },
 
   // n8n issues
@@ -73,7 +79,10 @@ const ALERT_PATTERNS: AlertPattern[] = [
     severity: 'critical',
     category: 'n8n',
     action: 'Check n8n logs, restart if needed',
-    autoRemediate: { server: 'beastmode', command: 'docker restart n8n 2>/dev/null || systemctl restart n8n' },
+    autoRemediate: {
+      server: 'beastmode',
+      command: 'docker restart n8n 2>/dev/null || systemctl restart n8n',
+    },
   },
   {
     pattern: /execution\s+\S+\s+failed|workflow.*timed?\s*out/i,
@@ -86,7 +95,10 @@ const ALERT_PATTERNS: AlertPattern[] = [
     severity: 'critical',
     category: 'n8n',
     action: 'n8n service may be down, restart it',
-    autoRemediate: { server: 'beastmode', command: 'docker restart n8n 2>/dev/null || systemctl restart n8n' },
+    autoRemediate: {
+      server: 'beastmode',
+      command: 'docker restart n8n 2>/dev/null || systemctl restart n8n',
+    },
   },
 
   // Network issues
@@ -142,7 +154,11 @@ const ALERT_PATTERNS: AlertPattern[] = [
     severity: 'critical',
     category: 'database',
     action: 'Check database service and connections',
-    autoRemediate: { server: 'auto', command: 'systemctl restart postgresql redis 2>/dev/null; docker restart postgres redis 2>/dev/null' },
+    autoRemediate: {
+      server: 'auto',
+      command:
+        'systemctl restart postgresql redis 2>/dev/null; docker restart postgres redis 2>/dev/null',
+    },
   },
 
   // Nginx
@@ -175,7 +191,7 @@ const ALERT_PATTERNS: AlertPattern[] = [
 export function analyzeMessage(
   message: string,
   channel: string,
-  timestamp: string
+  timestamp: string,
 ): ParsedAlert {
   for (const pattern of ALERT_PATTERNS) {
     if (pattern.pattern.test(message)) {
@@ -184,7 +200,10 @@ export function analyzeMessage(
       if (server === 'auto') {
         if (channel.includes('bugbounty') || channel.includes('beastmode')) {
           server = 'beastmode';
-        } else if (channel.includes('blogger') || channel.includes('auto_blogger')) {
+        } else if (
+          channel.includes('blogger') ||
+          channel.includes('auto_blogger')
+        ) {
           server = 'blogger';
         } else {
           server = 'beastmode'; // Default
@@ -198,9 +217,10 @@ export function analyzeMessage(
         severity: pattern.severity,
         category: pattern.category,
         suggestedAction: pattern.action,
-        autoRemediate: pattern.autoRemediate && server
-          ? { server, command: pattern.autoRemediate.command }
-          : undefined,
+        autoRemediate:
+          pattern.autoRemediate && server
+            ? { server, command: pattern.autoRemediate.command }
+            : undefined,
       };
     }
   }
@@ -231,11 +251,11 @@ export function analyzeMessage(
  * Analyze multiple messages and generate summary
  */
 export function analyzeAlerts(
-  messages: Array<{ text: string; channel: string; timestamp: string }>
+  messages: Array<{ text: string; channel: string; timestamp: string }>,
 ): AlertSummary {
   const alerts = messages
-    .map(m => analyzeMessage(m.text, m.channel, m.timestamp))
-    .filter(a => a.severity !== 'unknown');
+    .map((m) => analyzeMessage(m.text, m.channel, m.timestamp))
+    .filter((a) => a.severity !== 'unknown');
 
   const categories: Record<string, number> = {};
   let critical = 0;
@@ -256,13 +276,17 @@ export function analyzeAlerts(
     recommendations.push('Immediate attention needed for critical alerts');
   }
 
-  const remediable = alerts.filter(a => a.autoRemediate);
+  const remediable = alerts.filter((a) => a.autoRemediate);
   if (remediable.length > 0) {
-    recommendations.push(`${remediable.length} issue(s) can be auto-remediated`);
+    recommendations.push(
+      `${remediable.length} issue(s) can be auto-remediated`,
+    );
   }
 
   if (categories['memory'] > 0) {
-    recommendations.push('Memory issues detected - consider scaling or optimizing');
+    recommendations.push(
+      'Memory issues detected - consider scaling or optimizing',
+    );
   }
 
   if (categories['disk'] > 0) {
@@ -291,9 +315,10 @@ export function analyzeAlerts(
  * Get auto-remediation commands for alerts
  */
 export function getRemediationCommands(
-  alerts: ParsedAlert[]
+  alerts: ParsedAlert[],
 ): Array<{ server: string; command: string; reason: string }> {
-  const commands: Array<{ server: string; command: string; reason: string }> = [];
+  const commands: Array<{ server: string; command: string; reason: string }> =
+    [];
   const seen = new Set<string>();
 
   for (const alert of alerts) {
@@ -325,7 +350,9 @@ export function formatAlertSummaryForWhatsApp(summary: AlertSummary): string {
     summary.critical > 0 ? `🔴 ${summary.critical} critical` : '',
     summary.warning > 0 ? `🟡 ${summary.warning} warning` : '',
     summary.info > 0 ? `🔵 ${summary.info} info` : '',
-  ].filter(s => s).join(' • ');
+  ]
+    .filter((s) => s)
+    .join(' • ');
 
   const categoryLines = Object.entries(summary.categories)
     .sort((a, b) => b[1] - a[1])
@@ -335,20 +362,28 @@ export function formatAlertSummaryForWhatsApp(summary: AlertSummary): string {
   const topAlerts = summary.alerts
     .slice(0, 5)
     .map((a, i) => {
-      const emoji = { critical: '🔴', warning: '🟡', info: '🔵', unknown: '⚪' }[a.severity];
+      const emoji = {
+        critical: '🔴',
+        warning: '🟡',
+        info: '🔵',
+        unknown: '⚪',
+      }[a.severity];
       return `${i + 1}. ${emoji} [${a.category}] ${a.message.substring(0, 100)}${a.message.length > 100 ? '...' : ''}
    _Action: ${a.suggestedAction}_`;
     })
     .join('\n\n');
 
-  const remediable = summary.alerts.filter(a => a.autoRemediate);
-  const remediationNote = remediable.length > 0
-    ? `\n\n*Auto-fix available for ${remediable.length} issue(s)*\nSay "fix it" to auto-remediate.`
-    : '';
+  const remediable = summary.alerts.filter((a) => a.autoRemediate);
+  const remediationNote =
+    remediable.length > 0
+      ? `\n\n*Auto-fix available for ${remediable.length} issue(s)*\nSay "fix it" to auto-remediate.`
+      : '';
 
-  const recommendationLines = summary.recommendations.length > 0
-    ? '\n\n*Recommendations:*\n' + summary.recommendations.map(r => `• ${r}`).join('\n')
-    : '';
+  const recommendationLines =
+    summary.recommendations.length > 0
+      ? '\n\n*Recommendations:*\n' +
+        summary.recommendations.map((r) => `• ${r}`).join('\n')
+      : '';
 
   return `*Alert Summary* (${summary.total} alerts)
 ${severityLine}

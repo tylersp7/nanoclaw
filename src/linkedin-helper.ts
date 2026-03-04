@@ -12,10 +12,16 @@ interface LinkedInSession {
 let browserInstance: Browser | null = null;
 
 async function loadSession(): Promise<LinkedInSession> {
-  const sessionFile = path.join(os.homedir(), '.nanoclaw-linkedin', 'session.json');
+  const sessionFile = path.join(
+    os.homedir(),
+    '.nanoclaw-linkedin',
+    'session.json',
+  );
 
   if (!fs.existsSync(sessionFile)) {
-    throw new Error('LinkedIn session not found. Run: node scripts/linkedin-session-setup.js');
+    throw new Error(
+      'LinkedIn session not found. Run: node scripts/linkedin-session-setup.js',
+    );
   }
 
   return JSON.parse(fs.readFileSync(sessionFile, 'utf-8'));
@@ -85,7 +91,7 @@ export interface LinkedInPost {
 export async function searchJobs(
   keywords: string,
   location: string = 'Remote',
-  datePosted: string = 'past-week'
+  datePosted: string = 'past-week',
 ): Promise<LinkedInJob[]> {
   const page = await createPage();
 
@@ -103,32 +109,42 @@ export async function searchJobs(
       await page.waitForTimeout(1000);
     }
 
-    const jobElements = await page.$$('.job-card-container, .jobs-search-results__list-item');
+    const jobElements = await page.$$(
+      '.job-card-container, .jobs-search-results__list-item',
+    );
 
     for (const jobEl of jobElements.slice(0, 25)) {
       try {
-        const title = await jobEl.$eval(
-          '.job-card-list__title, .job-card-container__link',
-          (el) => el.textContent?.trim() || ''
-        ).catch(() => '');
+        const title = await jobEl
+          .$eval(
+            '.job-card-list__title, .job-card-container__link',
+            (el) => el.textContent?.trim() || '',
+          )
+          .catch(() => '');
 
-        const company = await jobEl.$eval(
-          '.job-card-container__company-name, .artdeco-entity-lockup__subtitle',
-          (el) => el.textContent?.trim() || ''
-        ).catch(() => '');
+        const company = await jobEl
+          .$eval(
+            '.job-card-container__company-name, .artdeco-entity-lockup__subtitle',
+            (el) => el.textContent?.trim() || '',
+          )
+          .catch(() => '');
 
-        const loc = await jobEl.$eval(
-          '.job-card-container__metadata-item, .artdeco-entity-lockup__caption',
-          (el) => el.textContent?.trim() || ''
-        ).catch(() => '');
+        const loc = await jobEl
+          .$eval(
+            '.job-card-container__metadata-item, .artdeco-entity-lockup__caption',
+            (el) => el.textContent?.trim() || '',
+          )
+          .catch(() => '');
 
         const linkEl = await jobEl.$('a');
-        const href = linkEl ? await linkEl.getAttribute('href') || '' : '';
+        const href = linkEl ? (await linkEl.getAttribute('href')) || '' : '';
         const jobIdMatch = href.match(/\/(\d+)/);
         const jobId = jobIdMatch ? jobIdMatch[1] : '';
 
         const easyApplyEl = await jobEl.$('.job-card-container__apply-method');
-        const easyApplyText = easyApplyEl ? await easyApplyEl.textContent() : '';
+        const easyApplyText = easyApplyEl
+          ? await easyApplyEl.textContent()
+          : '';
         const easyApply = easyApplyText?.includes('Easy Apply') || false;
 
         if (title) {
@@ -138,7 +154,9 @@ export async function searchJobs(
             company,
             location: loc,
             description: '',
-            url: jobId ? `https://www.linkedin.com/jobs/view/${jobId}` : `https://www.linkedin.com${href}`,
+            url: jobId
+              ? `https://www.linkedin.com/jobs/view/${jobId}`
+              : `https://www.linkedin.com${href}`,
             postedDate: 'recent',
             easyApply,
             remote: loc.toLowerCase().includes('remote'),
@@ -160,7 +178,7 @@ export async function searchJobs(
  */
 export async function searchHashtag(
   hashtag: string,
-  limit: number = 20
+  limit: number = 20,
 ): Promise<LinkedInPost[]> {
   const page = await createPage();
 
@@ -180,30 +198,38 @@ export async function searchHashtag(
 
     for (const postEl of postElements.slice(0, limit)) {
       try {
-        const author = await postEl.$eval(
-          '.feed-shared-actor__name, .update-components-actor__name',
-          (el) => el.textContent?.trim() || ''
-        ).catch(() => '');
+        const author = await postEl
+          .$eval(
+            '.feed-shared-actor__name, .update-components-actor__name',
+            (el) => el.textContent?.trim() || '',
+          )
+          .catch(() => '');
 
-        const authorTitle = await postEl.$eval(
-          '.feed-shared-actor__description, .update-components-actor__description',
-          (el) => el.textContent?.trim() || ''
-        ).catch(() => '');
+        const authorTitle = await postEl
+          .$eval(
+            '.feed-shared-actor__description, .update-components-actor__description',
+            (el) => el.textContent?.trim() || '',
+          )
+          .catch(() => '');
 
-        const content = await postEl.$eval(
-          '.feed-shared-text, .update-components-text',
-          (el) => el.textContent?.trim() || ''
-        ).catch(() => '');
+        const content = await postEl
+          .$eval(
+            '.feed-shared-text, .update-components-text',
+            (el) => el.textContent?.trim() || '',
+          )
+          .catch(() => '');
 
-        const likes = await postEl.$eval(
-          '.social-details-social-counts__reactions-count',
-          (el) => parseInt(el.textContent?.replace(/\D/g, '') || '0')
-        ).catch(() => 0);
+        const likes = await postEl
+          .$eval('.social-details-social-counts__reactions-count', (el) =>
+            parseInt(el.textContent?.replace(/\D/g, '') || '0'),
+          )
+          .catch(() => 0);
 
-        const comments = await postEl.$eval(
-          '.social-details-social-counts__comments',
-          (el) => parseInt(el.textContent?.replace(/\D/g, '') || '0')
-        ).catch(() => 0);
+        const comments = await postEl
+          .$eval('.social-details-social-counts__comments', (el) =>
+            parseInt(el.textContent?.replace(/\D/g, '') || '0'),
+          )
+          .catch(() => 0);
 
         if (author || content) {
           posts.push({
@@ -238,7 +264,9 @@ export function scoreJob(job: LinkedInJob, userSkills: string[]): number {
   if (job.easyApply) score += 2;
   if (job.remote) score += 2;
 
-  const matches = userSkills.filter((skill) => text.includes(skill.toLowerCase())).length;
+  const matches = userSkills.filter((skill) =>
+    text.includes(skill.toLowerCase()),
+  ).length;
   score += Math.min(matches, 3);
 
   if (text.includes('senior') || text.includes('lead')) score += 1;
@@ -254,14 +282,16 @@ export function scoreJob(job: LinkedInJob, userSkills: string[]): number {
  * Format jobs for WhatsApp
  */
 export function formatJobsForWhatsApp(
-  jobs: Array<LinkedInJob & { relevanceScore?: number }>
+  jobs: Array<LinkedInJob & { relevanceScore?: number }>,
 ): string {
   if (jobs.length === 0) return 'No jobs found.';
 
   return jobs
     .slice(0, 10)
     .map((job, i) => {
-      const scoreStr = job.relevanceScore ? ` [Score: ${job.relevanceScore}/10]` : '';
+      const scoreStr = job.relevanceScore
+        ? ` [Score: ${job.relevanceScore}/10]`
+        : '';
       const easyApply = job.easyApply ? ' 🟢 Easy Apply' : '';
       const remote = job.remote ? ' 🌍 Remote' : '';
 

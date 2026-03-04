@@ -5,7 +5,16 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { FollowUpEntry, NewMessage, PipelineRunLogEntry, PipelineState, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
+import {
+  FollowUpEntry,
+  MessageDestination,
+  NewMessage,
+  PipelineRunLogEntry,
+  PipelineState,
+  RegisteredGroup,
+  ScheduledTask,
+  TaskRunLog,
+} from './types.js';
 
 let db: Database.Database;
 
@@ -219,6 +228,15 @@ function createSchema(database: Database.Database): void {
     );
   } catch {
     /* columns already exist */
+  }
+
+  // Add destinations column to registered_groups (named routing)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN destinations TEXT DEFAULT NULL`,
+    );
+  } catch {
+    /* column already exists */
   }
 }
 
@@ -626,6 +644,7 @@ export function getRegisteredGroup(
         added_at: string;
         container_config: string | null;
         requires_trigger: number | null;
+        destinations: string | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -647,6 +666,9 @@ export function getRegisteredGroup(
       : undefined,
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    destinations: row.destinations
+      ? JSON.parse(row.destinations)
+      : undefined,
   };
 }
 
@@ -655,8 +677,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, destinations)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -665,6 +687,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.added_at,
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
+    group.destinations ? JSON.stringify(group.destinations) : null,
   );
 }
 
@@ -677,6 +700,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     added_at: string;
     container_config: string | null;
     requires_trigger: number | null;
+    destinations: string | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -697,6 +721,9 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         : undefined,
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+      destinations: row.destinations
+        ? JSON.parse(row.destinations)
+        : undefined,
     };
   }
   return result;
@@ -704,16 +731,20 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
 
 // --- Pipeline state ---
 
-export function updatePipelineState(taskId: string, state: PipelineState): void {
-  db.prepare(
-    `UPDATE scheduled_tasks SET pipeline_state = ? WHERE id = ?`,
-  ).run(JSON.stringify(state), taskId);
+export function updatePipelineState(
+  taskId: string,
+  state: PipelineState,
+): void {
+  db.prepare(`UPDATE scheduled_tasks SET pipeline_state = ? WHERE id = ?`).run(
+    JSON.stringify(state),
+    taskId,
+  );
 }
 
 export function getPipelineState(taskId: string): PipelineState | null {
-  const row = db.prepare(
-    `SELECT pipeline_state FROM scheduled_tasks WHERE id = ?`,
-  ).get(taskId) as { pipeline_state: string | null } | undefined;
+  const row = db
+    .prepare(`SELECT pipeline_state FROM scheduled_tasks WHERE id = ?`)
+    .get(taskId) as { pipeline_state: string | null } | undefined;
   if (!row?.pipeline_state) return null;
   return JSON.parse(row.pipeline_state);
 }
@@ -755,9 +786,11 @@ export function queueFollowUp(entry: FollowUpEntry): void {
 }
 
 export function getPendingFollowUps(): FollowUpEntry[] {
-  return db.prepare(
-    `SELECT * FROM follow_up_queue WHERE status = 'pending' ORDER BY created_at`,
-  ).all() as FollowUpEntry[];
+  return db
+    .prepare(
+      `SELECT * FROM follow_up_queue WHERE status = 'pending' ORDER BY created_at`,
+    )
+    .all() as FollowUpEntry[];
 }
 
 export function markFollowUpProcessing(id: number): void {
@@ -800,26 +833,38 @@ export function isNotificationDuplicate(
     .trim()
     .substring(0, 500); // only hash first 500 chars for efficiency
 
-  const hash = crypto.createHash('sha256').update(normalized).digest('hex').substring(0, 16);
+  const hash = crypto
+    .createHash('sha256')
+    .update(normalized)
+    .digest('hex')
+    .substring(0, 16);
 
   const cutoff = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
 
   // Global dedup: same content hash to same chat within window
-  const existing = db.prepare(`
+  const existing = db
+    .prepare(
+      `
     SELECT id FROM notification_log
     WHERE content_hash = ? AND chat_jid = ? AND sent_at > ? AND suppressed = 0
     LIMIT 1
-  `).get(hash, chatJid, cutoff);
+  `,
+    )
+    .get(hash, chatJid, cutoff);
 
   if (existing) return true;
 
   // Task-level dedup: same task sent same content hash within window (catches slight variations)
   if (taskId) {
-    const taskDup = db.prepare(`
+    const taskDup = db
+      .prepare(
+        `
       SELECT id FROM notification_log
       WHERE content_hash = ? AND source = ? AND sent_at > ? AND suppressed = 0
       LIMIT 1
-    `).get(hash, taskId, cutoff);
+    `,
+      )
+      .get(hash, taskId, cutoff);
     if (taskDup) return true;
   }
 
@@ -842,12 +887,24 @@ export function logNotification(
     .trim()
     .substring(0, 500);
 
-  const hash = crypto.createHash('sha256').update(normalized).digest('hex').substring(0, 16);
+  const hash = crypto
+    .createHash('sha256')
+    .update(normalized)
+    .digest('hex')
+    .substring(0, 16);
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO notification_log (content_hash, chat_jid, source, sent_at, suppressed)
     VALUES (?, ?, ?, ?, ?)
-  `).run(hash, chatJid, source || null, new Date().toISOString(), suppressed ? 1 : 0);
+  `,
+  ).run(
+    hash,
+    chatJid,
+    source || null,
+    new Date().toISOString(),
+    suppressed ? 1 : 0,
+  );
 
   // Cleanup old entries (older than 7 days)
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -864,13 +921,17 @@ export function getNotificationStats(hours: number = 24): {
 } {
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT
       COUNT(*) as total,
       SUM(CASE WHEN suppressed = 0 THEN 1 ELSE 0 END) as sent,
       SUM(CASE WHEN suppressed = 1 THEN 1 ELSE 0 END) as suppressed
     FROM notification_log WHERE sent_at > ?
-  `).get(cutoff) as { total: number; sent: number; suppressed: number };
+  `,
+    )
+    .get(cutoff) as { total: number; sent: number; suppressed: number };
 
   return row || { total: 0, sent: 0, suppressed: 0 };
 }
@@ -885,10 +946,12 @@ export function logHubSpotSync(entry: {
   status: string;
   error?: string;
 }): void {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO hubspot_sync_log (lead_id, hubspot_contact_id, hubspot_deal_id, action, status, synced_at, error)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
+  ).run(
     entry.lead_id,
     entry.hubspot_contact_id || null,
     entry.hubspot_deal_id || null,
@@ -905,20 +968,32 @@ export function getHubSpotSyncStats(): {
   lastSync: string | null;
   byAction: Record<string, number>;
 } {
-  const total = db.prepare(`
+  const total = db
+    .prepare(
+      `
     SELECT
       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as synced,
       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors
     FROM hubspot_sync_log
-  `).get() as { synced: number; errors: number } | undefined;
+  `,
+    )
+    .get() as { synced: number; errors: number } | undefined;
 
-  const lastRow = db.prepare(`
+  const lastRow = db
+    .prepare(
+      `
     SELECT synced_at FROM hubspot_sync_log WHERE status = 'success' ORDER BY synced_at DESC LIMIT 1
-  `).get() as { synced_at: string } | undefined;
+  `,
+    )
+    .get() as { synced_at: string } | undefined;
 
-  const actionRows = db.prepare(`
+  const actionRows = db
+    .prepare(
+      `
     SELECT action, COUNT(*) as count FROM hubspot_sync_log WHERE status = 'success' GROUP BY action
-  `).all() as Array<{ action: string; count: number }>;
+  `,
+    )
+    .all() as Array<{ action: string; count: number }>;
 
   const byAction: Record<string, number> = {};
   for (const row of actionRows) {
@@ -935,13 +1010,17 @@ export function getHubSpotSyncStats(): {
 
 export function getUnsyncedLeads(): Array<{ lead_id: string }> {
   // Returns lead IDs that have never been successfully synced
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT DISTINCT lead_id FROM hubspot_sync_log
     WHERE status = 'error'
       AND lead_id NOT IN (
         SELECT lead_id FROM hubspot_sync_log WHERE status = 'success'
       )
-  `).all() as Array<{ lead_id: string }>;
+  `,
+    )
+    .all() as Array<{ lead_id: string }>;
 }
 
 // --- JSON migration ---

@@ -15,7 +15,11 @@ let credentials: SlackCredentials | null = null;
 function loadCredentials(): SlackCredentials {
   if (credentials) return credentials;
 
-  const credPath = path.join(os.homedir(), '.nanoclaw-slack', 'slack-credentials.json');
+  const credPath = path.join(
+    os.homedir(),
+    '.nanoclaw-slack',
+    'slack-credentials.json',
+  );
   if (!fs.existsSync(credPath)) {
     throw new Error('Slack credentials not found. Run /add-slack to set up.');
   }
@@ -53,7 +57,7 @@ async function getChannelId(channelName: string): Promise<string | null> {
   });
 
   const publicChannel = publicResult.channels?.find(
-    (c) => c.name === name || c.id === name
+    (c) => c.name === name || c.id === name,
   );
   if (publicChannel) return publicChannel.id!;
 
@@ -63,7 +67,7 @@ async function getChannelId(channelName: string): Promise<string | null> {
   });
 
   const privateChannel = privateResult.channels?.find(
-    (c) => c.name === name || c.id === name
+    (c) => c.name === name || c.id === name,
   );
   if (privateChannel) return privateChannel.id!;
 
@@ -76,7 +80,7 @@ async function getChannelId(channelName: string): Promise<string | null> {
 export async function getChannelMessages(
   channelName: string,
   limit: number = 50,
-  oldest?: string
+  oldest?: string,
 ): Promise<SlackMessage[]> {
   const client = getClient();
 
@@ -115,7 +119,9 @@ export async function getChannelMessages(
       channel: channelId,
       channelName,
       thread_ts: msg.thread_ts,
-      reactions: msg.reactions as Array<{ name: string; count: number }> | undefined,
+      reactions: msg.reactions as
+        | Array<{ name: string; count: number }>
+        | undefined,
     });
   }
 
@@ -125,7 +131,9 @@ export async function getChannelMessages(
 /**
  * List all channels the bot has access to
  */
-export async function listChannels(): Promise<Array<{ id: string; name: string; isMember: boolean }>> {
+export async function listChannels(): Promise<
+  Array<{ id: string; name: string; isMember: boolean }>
+> {
   const client = getClient();
 
   const result = await client.conversations.list({
@@ -149,7 +157,7 @@ export async function listChannels(): Promise<Array<{ id: string; name: string; 
  */
 export async function getMessagesSince(
   channelName: string,
-  sinceTimestamp: string
+  sinceTimestamp: string,
 ): Promise<SlackMessage[]> {
   return getChannelMessages(channelName, 100, sinceTimestamp);
 }
@@ -160,7 +168,7 @@ export async function getMessagesSince(
 export async function postMessage(
   channelName: string,
   text: string,
-  threadTs?: string
+  threadTs?: string,
 ): Promise<void> {
   const creds = loadCredentials();
   if (creds.mode === 'tool') {
@@ -186,11 +194,11 @@ export async function postMessage(
  */
 export function filterBySeverity(
   messages: SlackMessage[],
-  severities: string[] = ['critical', 'high', 'error', 'failed']
+  severities: string[] = ['critical', 'high', 'error', 'failed'],
 ): SlackMessage[] {
   const keywords = severities.map((s) => s.toLowerCase());
   return messages.filter((msg) =>
-    keywords.some((keyword) => msg.text.toLowerCase().includes(keyword))
+    keywords.some((keyword) => msg.text.toLowerCase().includes(keyword)),
   );
 }
 

@@ -6,9 +6,15 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  SLACK_ONLY,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
+import { SlackChannel } from './channels/slack.js';
+import { TelegramChannel } from './channels/telegram.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { readEnvFile } from './env.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -16,6 +22,7 @@ import {
 import {
   ContainerOutput,
   runContainerAgent,
+  writeDestinationsSnapshot,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
@@ -41,6 +48,7 @@ import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startRelayServer } from './ssh-relay.js';
 import { flushNotifications, startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { startWebhookServer } from './webhook-server.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -279,6 +287,9 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
+  // Update destinations snapshot for cross-channel routing
+  writeDestinationsSnapshot(group.folder, isMain, registeredGroups);
+
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
@@ -480,9 +491,35 @@ async function main(): Promise<void> {
   };
 
   // Create and connect channels
-  whatsapp = new WhatsAppChannel(channelOpts);
-  channels.push(whatsapp);
-  await whatsapp.connect();
+  if (!TELEGRAM_ONLY && !SLACK_ONLY) {
+    whatsapp = new WhatsAppChannel(channelOpts);
+    channels.push(whatsapp);
+    await whatsapp.connect();
+  }
+
+  if (TELEGRAM_BOT_TOKEN) {
+    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
+    channels.push(telegram);
+    await telegram.connect();
+  }
+
+  // Slack channel (conditional on tokens being configured)
+  const slackEnv = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
+  if (slackEnv.SLACK_BOT_TOKEN && slackEnv.SLACK_APP_TOKEN) {
+    const slack = new SlackChannel(channelOpts);
+    channels.push(slack);
+    await slack.connect();
+  }
+
+  // Start webhook server for inbound integrations
+  startWebhookServer({
+    registeredGroups: () => registeredGroups,
+    onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
+    onChatMetadata: (chatJid, timestamp, name, channel, isGroup) =>
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    getWebhookSecret: (groupFolder: string) =>
+      getRouterState(`webhook_secret_${groupFolder}`) || null,
+  });
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

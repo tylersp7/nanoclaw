@@ -70,31 +70,42 @@ function sshExecViaRelay(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${relaySecret}`,
+          Authorization: `Bearer ${relaySecret}`,
           'Content-Length': Buffer.byteLength(body),
         },
         timeout: 30000,
       },
       (res) => {
         let data = '';
-        res.on('data', (chunk) => { data += chunk; });
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
         res.on('end', () => {
           try {
             const parsed = JSON.parse(data);
             if (res.statusCode === 200 && parsed.result !== undefined) {
               resolve(parsed.result);
             } else {
-              reject(new Error(parsed.error || `Relay returned ${res.statusCode}`));
+              reject(
+                new Error(parsed.error || `Relay returned ${res.statusCode}`),
+              );
             }
           } catch {
-            reject(new Error(`Relay returned invalid JSON: ${data.slice(0, 200)}`));
+            reject(
+              new Error(`Relay returned invalid JSON: ${data.slice(0, 200)}`),
+            );
           }
         });
       },
     );
 
-    req.on('error', (err) => reject(new Error(`SSH relay connection failed: ${err.message}`)));
-    req.on('timeout', () => { req.destroy(); reject(new Error('SSH relay request timed out')); });
+    req.on('error', (err) =>
+      reject(new Error(`SSH relay connection failed: ${err.message}`)),
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('SSH relay request timed out'));
+    });
     req.write(body);
     req.end();
   });
@@ -139,15 +150,18 @@ function tryHosts(
   server: VPSConfig,
   command: string,
   hosts: Array<{ host: string; port: number; label: string }>,
-  index: number
+  index: number,
 ): Promise<string> {
   if (index >= hosts.length) {
-    const tried = hosts.map(h => `${h.host}:${h.port}`).join(', ');
-    const hint = server.sshMode === 'tailscale'
-      ? '. BeastMode uses Tailscale SSH which requires browser auth. To fix: enable standard OpenSSH on port 2222 on the VPS, or run commands from the host machine.'
-      : '';
+    const tried = hosts.map((h) => `${h.host}:${h.port}`).join(', ');
+    const hint =
+      server.sshMode === 'tailscale'
+        ? '. BeastMode uses Tailscale SSH which requires browser auth. To fix: enable standard OpenSSH on port 2222 on the VPS, or run commands from the host machine.'
+        : '';
     return Promise.reject(
-      new Error(`SSH connection failed to ${server.name}. Tried: ${tried}${hint}`)
+      new Error(
+        `SSH connection failed to ${server.name}. Tried: ${tried}${hint}`,
+      ),
     );
   }
 
@@ -166,7 +180,9 @@ function tryHosts(
     const timeout = setTimeout(() => {
       conn.end();
       // Try next host
-      tryHosts(server, command, hosts, index + 1).then(resolve).catch(reject);
+      tryHosts(server, command, hosts, index + 1)
+        .then(resolve)
+        .catch(reject);
     }, 8000);
 
     conn.on('ready', () => {
@@ -196,7 +212,9 @@ function tryHosts(
     conn.on('error', () => {
       clearTimeout(timeout);
       // Try next host
-      tryHosts(server, command, hosts, index + 1).then(resolve).catch(reject);
+      tryHosts(server, command, hosts, index + 1)
+        .then(resolve)
+        .catch(reject);
     });
 
     conn.connect({
@@ -212,11 +230,15 @@ function tryHosts(
 /**
  * Get full health report for a server
  */
-export async function getHealthReport(serverName: string): Promise<HealthReport> {
+export async function getHealthReport(
+  serverName: string,
+): Promise<HealthReport> {
   const config = loadConfig();
   const server = config.servers[serverName];
   if (!server) {
-    throw new Error(`Server '${serverName}' not found. Available: ${Object.keys(config.servers).join(', ')}`);
+    throw new Error(
+      `Server '${serverName}' not found. Available: ${Object.keys(config.servers).join(', ')}`,
+    );
   }
 
   const commands = [
@@ -229,11 +251,15 @@ export async function getHealthReport(serverName: string): Promise<HealthReport>
     'journalctl --no-pager -p err -n 10 --since "1 hour ago" 2>/dev/null || dmesg | tail -10',
   ];
 
-  const combinedCommand = commands.map((cmd, i) => `echo "===SECTION${i}==="; ${cmd}`).join('; ');
+  const combinedCommand = commands
+    .map((cmd, i) => `echo "===SECTION${i}==="; ${cmd}`)
+    .join('; ');
 
   try {
     const output = await sshExec(server, combinedCommand);
-    const sections = output.split(/===SECTION\d+===/).filter((s: string) => s.trim());
+    const sections = output
+      .split(/===SECTION\d+===/)
+      .filter((s: string) => s.trim());
 
     const uptime = sections[0]?.trim() || 'unknown';
     const loadParts = sections[1]?.trim().split(' ') || [];
@@ -244,26 +270,47 @@ export async function getHealthReport(serverName: string): Promise<HealthReport>
     const memParts = memLine.split(/\s+/);
     const memTotal = memParts[1] ? `${memParts[1]}MB` : 'unknown';
     const memUsed = memParts[2] ? `${memParts[2]}MB` : 'unknown';
-    const memPercent = memParts[1] && memParts[2]
-      ? `${Math.round((parseInt(memParts[2]) / parseInt(memParts[1])) * 100)}%`
-      : 'unknown';
+    const memPercent =
+      memParts[1] && memParts[2]
+        ? `${Math.round((parseInt(memParts[2]) / parseInt(memParts[1])) * 100)}%`
+        : 'unknown';
 
-    const diskLines = sections[4]?.trim().split('\n').filter((l: string) => l && !l.startsWith('Mounted')) || [];
+    const diskLines =
+      sections[4]
+        ?.trim()
+        .split('\n')
+        .filter((l: string) => l && !l.startsWith('Mounted')) || [];
     const disk = diskLines.map((line: string) => {
       const parts = line.split(/\s+/);
-      return { mount: parts[0] || '/', used: parts[1] || '?', total: parts[2] || '?', percent: parts[3] || '?' };
+      return {
+        mount: parts[0] || '/',
+        used: parts[1] || '?',
+        total: parts[2] || '?',
+        percent: parts[3] || '?',
+      };
     });
 
     const dockerOutput = sections[5]?.trim() || '';
-    const docker = dockerOutput === 'NO_DOCKER'
-      ? []
-      : dockerOutput.split('\n').filter((l: string) => l.trim()).map((line: string) => {
-          const [name, status, image] = line.split('|');
-          return { name: name || 'unknown', status: status || 'unknown', image: image || 'unknown' };
-        });
+    const docker =
+      dockerOutput === 'NO_DOCKER'
+        ? []
+        : dockerOutput
+            .split('\n')
+            .filter((l: string) => l.trim())
+            .map((line: string) => {
+              const [name, status, image] = line.split('|');
+              return {
+                name: name || 'unknown',
+                status: status || 'unknown',
+                image: image || 'unknown',
+              };
+            });
 
     const errorOutput = sections[6]?.trim() || '';
-    const recentErrors = errorOutput.split('\n').filter((l: string) => l.trim()).slice(0, 10);
+    const recentErrors = errorOutput
+      .split('\n')
+      .filter((l: string) => l.trim())
+      .slice(0, 10);
 
     const serviceChecks = await checkServices(server);
 
@@ -273,7 +320,8 @@ export async function getHealthReport(serverName: string): Promise<HealthReport>
       uptime,
       cpu: { loadAvg, cores },
       memory: { used: memUsed, total: memTotal, percent: memPercent },
-      disk, docker,
+      disk,
+      docker,
       services: serviceChecks,
       recentErrors,
       connectionMethod: 'ssh',
@@ -291,7 +339,10 @@ export async function getHealthReport(serverName: string): Promise<HealthReport>
  * Get partial health report via n8n API when SSH is unavailable.
  * Uses the n8n-api-helper (which supports relay mode in containers).
  */
-async function getPartialHealthViaN8n(server: VPSConfig, sshError: string): Promise<HealthReport> {
+async function getPartialHealthViaN8n(
+  server: VPSConfig,
+  sshError: string,
+): Promise<HealthReport> {
   const report: HealthReport = {
     server: server.name,
     timestamp: new Date().toISOString(),
@@ -311,7 +362,10 @@ async function getPartialHealthViaN8n(server: VPSConfig, sshError: string): Prom
       const workflows = await listWorkflows();
       const active = workflows.filter((w: any) => w.active).length;
       report.services.push({ name: 'n8n', active: true });
-      report.services.push({ name: `n8n-workflows (${active} active)`, active: true });
+      report.services.push({
+        name: `n8n-workflows (${active} active)`,
+        active: true,
+      });
     } catch {
       report.services.push({ name: 'n8n', active: false });
     }
@@ -323,20 +377,40 @@ async function getPartialHealthViaN8n(server: VPSConfig, sshError: string): Prom
 /**
  * Check if services are running
  */
-async function checkServices(server: VPSConfig): Promise<Array<{ name: string; active: boolean }>> {
+async function checkServices(
+  server: VPSConfig,
+): Promise<Array<{ name: string; active: boolean }>> {
   const results: Array<{ name: string; active: boolean }> = [];
 
   for (const service of server.services) {
     try {
       if (service === 'docker') {
-        const output = await sshExec(server, 'systemctl is-active docker 2>/dev/null || service docker status 2>/dev/null | head -1');
-        results.push({ name: 'docker', active: output.includes('active') || output.includes('running') });
+        const output = await sshExec(
+          server,
+          'systemctl is-active docker 2>/dev/null || service docker status 2>/dev/null | head -1',
+        );
+        results.push({
+          name: 'docker',
+          active: output.includes('active') || output.includes('running'),
+        });
       } else if (service === 'n8n') {
-        const output = await sshExec(server, 'docker ps --filter name=n8n --format "{{.Status}}" 2>/dev/null || systemctl is-active n8n 2>/dev/null');
-        results.push({ name: 'n8n', active: output.includes('Up') || output.includes('active') });
+        const output = await sshExec(
+          server,
+          'docker ps --filter name=n8n --format "{{.Status}}" 2>/dev/null || systemctl is-active n8n 2>/dev/null',
+        );
+        results.push({
+          name: 'n8n',
+          active: output.includes('Up') || output.includes('active'),
+        });
       } else {
-        const output = await sshExec(server, `systemctl is-active ${service} 2>/dev/null || service ${service} status 2>/dev/null | head -1`);
-        results.push({ name: service, active: output.includes('active') || output.includes('running') });
+        const output = await sshExec(
+          server,
+          `systemctl is-active ${service} 2>/dev/null || service ${service} status 2>/dev/null | head -1`,
+        );
+        results.push({
+          name: service,
+          active: output.includes('active') || output.includes('running'),
+        });
       }
     } catch {
       results.push({ name: service, active: false });
@@ -352,7 +426,7 @@ async function checkServices(server: VPSConfig): Promise<Array<{ name: string; a
 export async function getContainerLogs(
   serverName: string,
   containerName: string,
-  lines: number = 50
+  lines: number = 50,
 ): Promise<string> {
   const config = loadConfig();
   const server = config.servers[serverName];
@@ -365,7 +439,7 @@ export async function getContainerLogs(
  */
 export async function restartContainer(
   serverName: string,
-  containerName: string
+  containerName: string,
 ): Promise<string> {
   const config = loadConfig();
   const server = config.servers[serverName];
@@ -378,7 +452,7 @@ export async function restartContainer(
  */
 export async function restartService(
   serverName: string,
-  serviceName: string
+  serviceName: string,
 ): Promise<string> {
   const config = loadConfig();
   const server = config.servers[serverName];
@@ -391,7 +465,7 @@ export async function restartService(
  */
 export async function runCommand(
   serverName: string,
-  command: string
+  command: string,
 ): Promise<string> {
   const config = loadConfig();
   const server = config.servers[serverName];
@@ -402,7 +476,12 @@ export async function runCommand(
 /**
  * List available servers
  */
-export function listServers(): Array<{ id: string; name: string; host: string; sshMode: string }> {
+export function listServers(): Array<{
+  id: string;
+  name: string;
+  host: string;
+  sshMode: string;
+}> {
   const config = loadConfig();
   return Object.entries(config.servers).map(([id, server]) => ({
     id,
@@ -416,28 +495,39 @@ export function listServers(): Array<{ id: string; name: string; host: string; s
  * Format health report for WhatsApp
  */
 export function formatHealthForWhatsApp(report: HealthReport): string {
-  const method = report.connectionMethod === 'n8n-api-only'
-    ? '\n⚠️ _SSH unavailable — partial report via n8n API_\n'
-    : '';
+  const method =
+    report.connectionMethod === 'n8n-api-only'
+      ? '\n⚠️ _SSH unavailable — partial report via n8n API_\n'
+      : '';
 
-  const serviceStatus = report.services.map((s: { name: string; active: boolean }) =>
-    `${s.active ? '✅' : '❌'} ${s.name}`
-  ).join('\n');
+  const serviceStatus = report.services
+    .map(
+      (s: { name: string; active: boolean }) =>
+        `${s.active ? '✅' : '❌'} ${s.name}`,
+    )
+    .join('\n');
 
-  const dockerStatus = report.docker.length > 0
-    ? report.docker.map((d: { name: string; status: string }) => {
-        const isUp = d.status.toLowerCase().includes('up');
-        return `${isUp ? '✅' : '❌'} ${d.name} - ${d.status}`;
-      }).join('\n')
-    : 'No Docker containers';
+  const dockerStatus =
+    report.docker.length > 0
+      ? report.docker
+          .map((d: { name: string; status: string }) => {
+            const isUp = d.status.toLowerCase().includes('up');
+            return `${isUp ? '✅' : '❌'} ${d.name} - ${d.status}`;
+          })
+          .join('\n')
+      : 'No Docker containers';
 
-  const diskStatus = report.disk.map((d: { mount: string; used: string; total: string; percent: string }) =>
-    `${d.mount}: ${d.used}/${d.total} (${d.percent})`
-  ).join('\n');
+  const diskStatus = report.disk
+    .map(
+      (d: { mount: string; used: string; total: string; percent: string }) =>
+        `${d.mount}: ${d.used}/${d.total} (${d.percent})`,
+    )
+    .join('\n');
 
-  const errors = report.recentErrors.length > 0
-    ? report.recentErrors.slice(0, 5).join('\n')
-    : 'No recent errors';
+  const errors =
+    report.recentErrors.length > 0
+      ? report.recentErrors.slice(0, 5).join('\n')
+      : 'No recent errors';
 
   return `*${report.server} Health Report*
 ${new Date(report.timestamp).toLocaleString()}${method}

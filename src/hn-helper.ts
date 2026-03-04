@@ -32,7 +32,9 @@ export interface HNJobListing {
  */
 export async function getItem(id: number): Promise<HNItem | null> {
   try {
-    const response = await axios.get(`${HN_API_BASE}/item/${id}.json`, { timeout: 10000 });
+    const response = await axios.get(`${HN_API_BASE}/item/${id}.json`, {
+      timeout: 10000,
+    });
     return response.data;
   } catch {
     return null;
@@ -45,7 +47,7 @@ export async function getItem(id: number): Promise<HNItem | null> {
 export async function searchStories(
   query: string,
   tags?: string,
-  numericFilters?: string
+  numericFilters?: string,
 ): Promise<HNItem[]> {
   try {
     const params: Record<string, any> = {
@@ -58,7 +60,10 @@ export async function searchStories(
       params.numericFilters = numericFilters;
     }
 
-    const response = await axios.get(`${HN_ALGOLIA_API}/search`, { params, timeout: 15000 });
+    const response = await axios.get(`${HN_ALGOLIA_API}/search`, {
+      params,
+      timeout: 15000,
+    });
     return response.data.hits.map((hit: any) => ({
       id: parseInt(hit.objectID),
       type: 'story' as const,
@@ -94,9 +99,8 @@ export async function findWhoIsHiringThread(): Promise<HNItem | null> {
     if (!hits || hits.length === 0) return null;
 
     // Filter to only monthly hiring threads (title contains month/year)
-    const monthly = hits.find((h: any) =>
-      /who is hiring\??\s*\(/i.test(h.title)
-    ) || hits[0];
+    const monthly =
+      hits.find((h: any) => /who is hiring\??\s*\(/i.test(h.title)) || hits[0];
 
     return {
       id: parseInt(monthly.objectID),
@@ -138,7 +142,10 @@ export async function getThreadComments(threadId: number): Promise<HNItem[]> {
 /**
  * Parse a "Who's Hiring" comment into a job listing
  */
-export function parseJobListing(comment: HNItem, keywords: string[]): HNJobListing | null {
+export function parseJobListing(
+  comment: HNItem,
+  keywords: string[],
+): HNJobListing | null {
   if (!comment.text) return null;
 
   const text = comment.text.toLowerCase();
@@ -148,7 +155,7 @@ export function parseJobListing(comment: HNItem, keywords: string[]): HNJobListi
   const title = titleMatch ? titleMatch[1].trim() : 'Job Listing';
 
   const matchedKeywords = keywords.filter((keyword) =>
-    text.includes(keyword.toLowerCase())
+    text.includes(keyword.toLowerCase()),
   );
 
   if (matchedKeywords.length === 0) return null;
@@ -179,7 +186,7 @@ export function parseJobListing(comment: HNItem, keywords: string[]): HNJobListi
  */
 export async function searchWhoIsHiring(
   keywords: string[],
-  minScore: number = 7
+  minScore: number = 7,
 ): Promise<HNJobListing[]> {
   const thread = await findWhoIsHiringThread();
   if (!thread) {
@@ -206,7 +213,9 @@ export async function searchWhoIsHiring(
 /**
  * Find "Ask HN" posts about automation/workflows
  */
-export async function findAskHNOpportunities(keywords: string[]): Promise<HNItem[]> {
+export async function findAskHNOpportunities(
+  keywords: string[],
+): Promise<HNItem[]> {
   const results: HNItem[] = [];
 
   for (const keyword of keywords) {
@@ -215,7 +224,7 @@ export async function findAskHNOpportunities(keywords: string[]): Promise<HNItem
   }
 
   const unique = Array.from(
-    new Map(results.map((item) => [item.id, item])).values()
+    new Map(results.map((item) => [item.id, item])).values(),
   );
 
   const weekAgo = Date.now() / 1000 - 7 * 24 * 60 * 60;
@@ -234,7 +243,7 @@ export async function findShowHN(keywords: string[]): Promise<HNItem[]> {
   }
 
   const unique = Array.from(
-    new Map(results.map((item) => [item.id, item])).values()
+    new Map(results.map((item) => [item.id, item])).values(),
   );
 
   const weekAgo = Date.now() / 1000 - 7 * 24 * 60 * 60;

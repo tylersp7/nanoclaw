@@ -11,8 +11,17 @@ import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { CONTAINER_TIMEOUT, GROUPS_DIR, IDLE_TIMEOUT, MAIN_GROUP_FOLDER } from './config.js';
-import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
+import {
+  CONTAINER_TIMEOUT,
+  GROUPS_DIR,
+  IDLE_TIMEOUT,
+  MAIN_GROUP_FOLDER,
+} from './config.js';
+import {
+  ContainerOutput,
+  runContainerAgent,
+  writeTasksSnapshot,
+} from './container-runner.js';
 import {
   getAllTasks,
   getPipelineState,
@@ -24,13 +33,23 @@ import {
 import { detectAndQueueFollowUps } from './follow-up-detector.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
-import { PipelineState, PipelineStep, RegisteredGroup, ScheduledTask } from './types.js';
+import {
+  PipelineState,
+  PipelineStep,
+  RegisteredGroup,
+  ScheduledTask,
+} from './types.js';
 
 export interface PipelineDeps {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
-  onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
+  onProcess: (
+    groupJid: string,
+    proc: ChildProcess,
+    containerName: string,
+    groupFolder: string,
+  ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
 }
 
@@ -100,7 +119,11 @@ function resumeOrCreateState(task: ScheduledTask): PipelineState {
 
     if (Date.now() - startedAt > staleThreshold) {
       logger.warn(
-        { taskId: task.id, runId: existing.run_id, startedAt: existing.started_at },
+        {
+          taskId: task.id,
+          runId: existing.run_id,
+          startedAt: existing.started_at,
+        },
         'Stale pipeline run detected, resuming from last completed step',
       );
       // Reset status so we can resume
@@ -153,7 +176,8 @@ async function runStep(
   const isMain = task.group_folder === MAIN_GROUP_FOLDER;
   const sessions = deps.getSessions();
   const contextMode = step.context_mode || task.context_mode;
-  const sessionId = contextMode === 'group' ? sessions[task.group_folder] : undefined;
+  const sessionId =
+    contextMode === 'group' ? sessions[task.group_folder] : undefined;
 
   // Update tasks snapshot for container
   const tasks = getAllTasks();
@@ -177,7 +201,10 @@ async function runStep(
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id, step: step.name }, 'Pipeline step idle timeout');
+      logger.debug(
+        { taskId: task.id, step: step.name },
+        'Pipeline step idle timeout',
+      );
       deps.queue.closeStdin(task.chat_jid);
     }, IDLE_TIMEOUT);
   };
@@ -192,7 +219,8 @@ async function runStep(
       isMain,
       isScheduledTask: true,
     },
-    (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+    (proc, containerName) =>
+      deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
     async (streamedOutput: ContainerOutput) => {
       if (streamedOutput.result) {
         result = streamedOutput.result;
@@ -304,7 +332,86 @@ async function executeStep(
   );
 
   try {
-    const output = await runStep(step, stepIndex, prompt, task, deps);
+    let output = await runStep(step, stepIndex, prompt, task, deps);
+
+    // QA Gate: validate output if enabled
+    if (step.qaGate?.enabled) {
+      const maxRetries = step.qaGate.maxRetries ?? 3;
+      const qaPrompt =
+        step.qaGate.qaPrompt ||
+        'Validate the following output for correctness, completeness, and actionability. ' +
+          'If it passes all checks, respond with exactly "QA: PASS" on the first line followed by a brief summary. ' +
+          'If it fails, respond with exactly "QA: FAIL" on the first line followed by specific issues and actionable fixes.';
+
+      let qaAttempt = 0;
+      let passed = false;
+
+      while (qaAttempt < maxRetries && !passed) {
+        qaAttempt++;
+        logger.info(
+          {
+            taskId: task.id,
+            step: step.name,
+            qaAttempt,
+            maxRetries,
+          },
+          'Running QA gate',
+        );
+
+        const qaFullPrompt = `${qaPrompt}\n\n--- Output to validate ---\n${output}`;
+
+        // QA runs in isolated mode — no session persistence
+        const qaStep: PipelineStep = {
+          name: `${step.name} (QA)`,
+          prompt: qaFullPrompt,
+          context_mode: 'isolated',
+        };
+
+        try {
+          const qaOutput = await runStep(
+            qaStep,
+            stepIndex,
+            qaFullPrompt,
+            task,
+            deps,
+          );
+          const firstLine = qaOutput.trim().split('\n')[0].toUpperCase();
+
+          if (firstLine.includes('QA: PASS') || firstLine.includes('PASS')) {
+            passed = true;
+            logger.info(
+              { taskId: task.id, step: step.name, qaAttempt },
+              'QA gate passed',
+            );
+          } else {
+            logger.warn(
+              { taskId: task.id, step: step.name, qaAttempt, qaOutput: qaOutput.slice(0, 300) },
+              'QA gate failed, retrying step',
+            );
+
+            if (qaAttempt < maxRetries) {
+              // Re-run original step with QA feedback appended
+              const retryPrompt = `${prompt}\n\n--- QA Feedback (attempt ${qaAttempt}) ---\n${qaOutput}\n\nPlease address the QA feedback above and produce an improved output.`;
+              output = await runStep(step, stepIndex, retryPrompt, task, deps);
+            }
+          }
+        } catch (qaErr) {
+          logger.error(
+            { taskId: task.id, step: step.name, qaAttempt, error: qaErr },
+            'QA gate container error, treating as pass',
+          );
+          passed = true; // Don't block pipeline on QA infrastructure failure
+        }
+      }
+
+      if (!passed) {
+        logger.warn(
+          { taskId: task.id, step: step.name, maxRetries },
+          'QA gate: max retries exceeded, continuing with best attempt',
+        );
+        output = `[QA ESCALATION: Step "${step.name}" failed QA after ${maxRetries} attempts. Output may need human review.]\n\n${output}`;
+      }
+    }
 
     const stepDuration = Date.now() - stepStart;
     state.completed_steps.push(stepIndex);
@@ -367,7 +474,10 @@ export async function runPipeline(
   const startTime = Date.now();
 
   if (!task.pipeline_steps) {
-    logger.error({ taskId: task.id }, 'runPipeline called but no pipeline_steps');
+    logger.error(
+      { taskId: task.id },
+      'runPipeline called but no pipeline_steps',
+    );
     return;
   }
 
@@ -387,7 +497,11 @@ export async function runPipeline(
   const state = resumeOrCreateState(task);
 
   // If state came back as already running (non-stale), skip
-  if (state.status === 'running' && getPipelineState(task.id)?.run_id === state.run_id && state.completed_steps.length > 0) {
+  if (
+    state.status === 'running' &&
+    getPipelineState(task.id)?.run_id === state.run_id &&
+    state.completed_steps.length > 0
+  ) {
     // This is a stale-resume — proceed
   } else if (state.status !== 'running') {
     // Completed/error/paused from a previous run — start fresh
@@ -425,7 +539,9 @@ export async function runPipeline(
     if (aborted) break;
 
     // Skip batches whose steps have all been completed already (crash recovery)
-    const pendingIndices = batch.indices.filter((i) => !state.completed_steps.includes(i));
+    const pendingIndices = batch.indices.filter(
+      (i) => !state.completed_steps.includes(i),
+    );
     if (pendingIndices.length === 0) continue;
 
     // Skip batches that are entirely before our resume point
@@ -436,7 +552,11 @@ export async function runPipeline(
       // --- Parallel batch execution ---
       const stepNames = pendingIndices.map((i) => steps[i].name);
       logger.info(
-        { taskId: task.id, parallelGroup: steps[pendingIndices[0]].parallel_group, steps: stepNames },
+        {
+          taskId: task.id,
+          parallelGroup: steps[pendingIndices[0]].parallel_group,
+          steps: stepNames,
+        },
         'Running parallel batch',
       );
 
@@ -460,7 +580,10 @@ export async function runPipeline(
           state.error = `Parallel batch fully failed: ${errorMsgs}`;
           updatePipelineState(task.id, state);
           logger.error(
-            { taskId: task.id, parallelGroup: steps[pendingIndices[0]].parallel_group },
+            {
+              taskId: task.id,
+              parallelGroup: steps[pendingIndices[0]].parallel_group,
+            },
             'All steps in parallel batch failed, aborting pipeline',
           );
           aborted = true;
@@ -514,14 +637,20 @@ export async function runPipeline(
     run_at: new Date().toISOString(),
     duration_ms: totalDuration,
     status: lastError ? 'error' : 'success',
-    result: state.status === 'completed'
-      ? `Pipeline completed: ${state.completed_steps.length}/${steps.length} steps`
-      : null,
+    result:
+      state.status === 'completed'
+        ? `Pipeline completed: ${state.completed_steps.length}/${steps.length} steps`
+        : null,
     error: lastError,
   });
 
   logger.info(
-    { taskId: task.id, runId: state.run_id, totalDuration, status: state.status },
+    {
+      taskId: task.id,
+      runId: state.run_id,
+      totalDuration,
+      status: state.status,
+    },
     'Pipeline finished',
   );
 }

@@ -6,7 +6,11 @@ import os from 'os';
 import { SHEETS_SPREADSHEET_ID } from './config.js';
 import { logger } from './logger.js';
 
-const CREDENTIALS_PATH = path.join(os.homedir(), '.nanoclaw-calendar', 'credentials.json');
+const CREDENTIALS_PATH = path.join(
+  os.homedir(),
+  '.nanoclaw-calendar',
+  'credentials.json',
+);
 const TOKEN_PATH = path.join(os.homedir(), '.nanoclaw-sheets', 'token.json');
 
 const FLUSH_INTERVAL_MS = 30_000;
@@ -71,8 +75,18 @@ export function isConfigured(): boolean {
  */
 function extractSeverity(text: string): string {
   const upper = text.toUpperCase();
-  if (upper.includes('CRITICAL') || upper.includes('🔴') || upper.includes('DOWN')) return 'CRITICAL';
-  if (upper.includes('WARNING') || upper.includes('⚠') || upper.includes('WARN')) return 'WARNING';
+  if (
+    upper.includes('CRITICAL') ||
+    upper.includes('🔴') ||
+    upper.includes('DOWN')
+  )
+    return 'CRITICAL';
+  if (
+    upper.includes('WARNING') ||
+    upper.includes('⚠') ||
+    upper.includes('WARN')
+  )
+    return 'WARNING';
   return 'info';
 }
 
@@ -163,9 +177,15 @@ async function flushBuffer(): Promise<void> {
       },
     });
 
-    logger.debug({ rowCount: rows.length }, 'Flushed alert rows to Google Sheets');
+    logger.debug(
+      { rowCount: rows.length },
+      'Flushed alert rows to Google Sheets',
+    );
   } catch (err) {
-    logger.error({ err, rowCount: rows.length }, 'Failed to flush alert rows to Sheets');
+    logger.error(
+      { err, rowCount: rows.length },
+      'Failed to flush alert rows to Sheets',
+    );
     // Don't re-queue — rows are lost on error to avoid infinite retries
   }
 }

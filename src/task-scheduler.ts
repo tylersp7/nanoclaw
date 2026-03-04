@@ -17,7 +17,11 @@ import {
   TIMEZONE,
 } from './config.js';
 import { getContainerPool } from './container-pool.js';
-import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
+import {
+  ContainerOutput,
+  runContainerAgent,
+  writeTasksSnapshot,
+} from './container-runner.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -33,7 +37,11 @@ import {
   updateTaskAfterRun,
 } from './db.js';
 import { detectAndQueueFollowUps } from './follow-up-detector.js';
-import { isConfigured as isSheetsConfigured, logAlertToSheet, flushSheetLogs } from './sheets-logger.js';
+import {
+  isConfigured as isSheetsConfigured,
+  logAlertToSheet,
+  flushSheetLogs,
+} from './sheets-logger.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -53,7 +61,11 @@ function isNothingToReport(text: string): boolean {
 function isQuietHours(): boolean {
   const now = new Date();
   const hour = parseInt(
-    now.toLocaleString('en-US', { timeZone: TIMEZONE, hour: 'numeric', hour12: false }),
+    now.toLocaleString('en-US', {
+      timeZone: TIMEZONE,
+      hour: 'numeric',
+      hour12: false,
+    }),
     10,
   );
   if (QUIET_HOURS_START <= QUIET_HOURS_END) {
@@ -70,7 +82,11 @@ function isUrgentMessage(text: string): boolean {
   if (/\bCRITICAL\b/i.test(text)) return true;
   if (/\bESCALATE\b/i.test(text)) return true;
   if (/🔴/.test(text)) return true;
-  if (/\bDOWN\b/i.test(text) && /\b(SERVER|VPS|SERVICE|DATABASE|SITE)\b/i.test(text)) return true;
+  if (
+    /\bDOWN\b/i.test(text) &&
+    /\b(SERVER|VPS|SERVICE|DATABASE|SITE)\b/i.test(text)
+  )
+    return true;
   return false;
 }
 
@@ -108,7 +124,9 @@ async function runTask(
     // Compute next_run after pipeline completes
     let nextRun: string | null = null;
     if (task.schedule_type === 'cron') {
-      const interval = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE });
+      const interval = CronExpressionParser.parse(task.schedule_value, {
+        tz: TIMEZONE,
+      });
       nextRun = interval.next().toISOString();
     } else if (task.schedule_type === 'interval') {
       const ms = parseInt(task.schedule_value, 10);
@@ -211,7 +229,10 @@ async function runTask(
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id }, 'Scheduled task idle timeout, closing container stdin');
+      logger.debug(
+        { taskId: task.id },
+        'Scheduled task idle timeout, closing container stdin',
+      );
       deps.queue.closeStdin(queueKey);
     }, SCHEDULED_TASK_IDLE_TIMEOUT);
   };
@@ -228,34 +249,64 @@ async function runTask(
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
       },
-      (proc, containerName) => deps.onProcess(queueKey, proc, containerName, task.group_folder),
+      (proc, containerName) =>
+        deps.onProcess(queueKey, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (strip <internal> tags, dedup)
-          const text = streamedOutput.result.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+          const text = streamedOutput.result
+            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+            .trim();
           if (text) {
             // 1. Suppress "nothing to report" messages
             if (isNothingToReport(text)) {
               logNotification(task.chat_jid, text, task.id, true);
-              logger.info({ taskId: task.id }, 'Suppressed nothing-to-report notification');
-            // 2. Check for duplicate notifications (6h window)
-            } else if (isNotificationDuplicate(task.chat_jid, text, 360, task.id)) {
+              logger.info(
+                { taskId: task.id },
+                'Suppressed nothing-to-report notification',
+              );
+              // 2. Check for duplicate notifications (6h window)
+            } else if (
+              isNotificationDuplicate(task.chat_jid, text, 360, task.id)
+            ) {
               logNotification(task.chat_jid, text, task.id, true);
               if (isSheetsConfigured()) {
-                logAlertToSheet(task.id, task.prompt, task.chat_jid, text, true).catch(() => {});
+                logAlertToSheet(
+                  task.id,
+                  task.prompt,
+                  task.chat_jid,
+                  text,
+                  true,
+                ).catch(() => {});
               }
-              logger.info({ taskId: task.id }, 'Suppressed duplicate notification');
-            // 3. Queue non-urgent messages during quiet hours
+              logger.info(
+                { taskId: task.id },
+                'Suppressed duplicate notification',
+              );
+              // 3. Queue non-urgent messages during quiet hours
             } else if (isQuietHours() && !isUrgentMessage(text)) {
               logNotification(task.chat_jid, text, task.id, true);
-              quietHoursQueue.push({ jid: task.chat_jid, text, taskId: task.id });
-              logger.info({ taskId: task.id }, 'Queued notification for after quiet hours');
-            // 4. Send normally
+              quietHoursQueue.push({
+                jid: task.chat_jid,
+                text,
+                taskId: task.id,
+              });
+              logger.info(
+                { taskId: task.id },
+                'Queued notification for after quiet hours',
+              );
+              // 4. Send normally
             } else {
               logNotification(task.chat_jid, text, task.id, false);
               if (isSheetsConfigured()) {
-                logAlertToSheet(task.id, task.prompt, task.chat_jid, text, false).catch(() => {});
+                logAlertToSheet(
+                  task.id,
+                  task.prompt,
+                  task.chat_jid,
+                  text,
+                  false,
+                ).catch(() => {});
               }
               await deps.sendMessage(task.chat_jid, text);
             }
@@ -333,7 +384,10 @@ let batcher: NotificationBatcher | null = null;
 export async function flushNotifications(): Promise<void> {
   // Drain quiet hours queue — on shutdown, send everything
   if (batcher && quietHoursQueue.length > 0) {
-    logger.info({ count: quietHoursQueue.length }, 'Flushing quiet hours queue on shutdown');
+    logger.info(
+      { count: quietHoursQueue.length },
+      'Flushing quiet hours queue on shutdown',
+    );
     while (quietHoursQueue.length > 0) {
       const item = quietHoursQueue.shift()!;
       batcher.send(item.jid, item.text);
@@ -366,15 +420,21 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   logger.info('Scheduler loop started');
 
   // Quiet hours flush: check every 5 min if quiet hours ended, then drain queue
-  quietHoursTimer = setInterval(() => {
-    if (!isQuietHours() && quietHoursQueue.length > 0) {
-      logger.info({ count: quietHoursQueue.length }, 'Quiet hours ended, flushing queued notifications');
-      while (quietHoursQueue.length > 0) {
-        const item = quietHoursQueue.shift()!;
-        batcher!.send(item.jid, item.text);
+  quietHoursTimer = setInterval(
+    () => {
+      if (!isQuietHours() && quietHoursQueue.length > 0) {
+        logger.info(
+          { count: quietHoursQueue.length },
+          'Quiet hours ended, flushing queued notifications',
+        );
+        while (quietHoursQueue.length > 0) {
+          const item = quietHoursQueue.shift()!;
+          batcher!.send(item.jid, item.text);
+        }
       }
-    }
-  }, 5 * 60 * 1000);
+    },
+    5 * 60 * 1000,
+  );
 
   const loop = async () => {
     try {
@@ -393,10 +453,8 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         const taskQueueKey = currentTask.task_category
           ? `category:${currentTask.task_category}`
           : currentTask.chat_jid;
-        batchedDeps.queue.enqueueTask(
-          taskQueueKey,
-          currentTask.id,
-          () => runTask(currentTask, batchedDeps),
+        batchedDeps.queue.enqueueTask(taskQueueKey, currentTask.id, () =>
+          runTask(currentTask, batchedDeps),
         );
       }
 
@@ -433,7 +491,10 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
             } catch (err) {
               const errorMsg = err instanceof Error ? err.message : String(err);
               markFollowUpError(followUp.id!, errorMsg);
-              logger.error({ followUpId: followUp.id, err }, 'Follow-up failed');
+              logger.error(
+                { followUpId: followUp.id, err },
+                'Follow-up failed',
+              );
             }
           },
         );

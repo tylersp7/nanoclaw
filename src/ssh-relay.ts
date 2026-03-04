@@ -51,7 +51,12 @@ function loadVpsConfig(): Record<string, any> | null {
  * Used by containers that can't resolve or reach Tailscale-routed domains.
  */
 function handleFetch(body: string, res: http.ServerResponse): void {
-  let parsed: { url: string; method?: string; headers?: Record<string, string>; body?: string };
+  let parsed: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  };
   try {
     parsed = JSON.parse(body);
   } catch {
@@ -78,21 +83,27 @@ function handleFetch(body: string, res: http.ServerResponse): void {
     },
     (proxyRes) => {
       let data = '';
-      proxyRes.on('data', (chunk) => { data += chunk; });
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
       proxyRes.on('end', () => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          status: proxyRes.statusCode,
-          headers: proxyRes.headers,
-          body: data,
-        }));
+        res.end(
+          JSON.stringify({
+            status: proxyRes.statusCode,
+            headers: proxyRes.headers,
+            body: data,
+          }),
+        );
       });
     },
   );
 
   proxyReq.on('error', (err) => {
     res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: `Upstream request failed: ${err.message}` }));
+    res.end(
+      JSON.stringify({ error: `Upstream request failed: ${err.message}` }),
+    );
   });
 
   proxyReq.on('timeout', () => {
@@ -110,7 +121,10 @@ function handleFetch(body: string, res: http.ServerResponse): void {
 /**
  * Handle SSH command execution via the host's Tailscale-connected SSH.
  */
-async function handleExec(body: string, res: http.ServerResponse): Promise<void> {
+async function handleExec(
+  body: string,
+  res: http.ServerResponse,
+): Promise<void> {
   const { serverName, command } = JSON.parse(body);
 
   if (!serverName || !command) {
@@ -126,10 +140,7 @@ async function handleExec(body: string, res: http.ServerResponse): Promise<void>
     return;
   }
 
-  logger.info(
-    { serverName, commandLength: command.length },
-    'Relay: SSH exec',
-  );
+  logger.info({ serverName, commandLength: command.length }, 'Relay: SSH exec');
 
   const result = await sshExec(currentServers[serverName], command);
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -152,7 +163,9 @@ export function startRelayServer(): http.Server | null {
     }
 
     let body = '';
-    req.on('data', (chunk) => { body += chunk; });
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
     req.on('end', async () => {
       try {
         const urlPath = req.url || '/';
@@ -166,7 +179,10 @@ export function startRelayServer(): http.Server | null {
           res.end(JSON.stringify({ error: 'Not found. Use /exec or /fetch' }));
         }
       } catch (err: any) {
-        logger.warn({ error: err.message, path: req.url }, 'Relay: request failed');
+        logger.warn(
+          { error: err.message, path: req.url },
+          'Relay: request failed',
+        );
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));

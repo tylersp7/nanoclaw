@@ -33,7 +33,11 @@ let apiToken: string | null = null;
 let apiTokenExpires = 0;
 
 function loadCredentials(): RedditCredentials | null {
-  const credPath = path.join(os.homedir(), '.nanoclaw-reddit', 'credentials.json');
+  const credPath = path.join(
+    os.homedir(),
+    '.nanoclaw-reddit',
+    'credentials.json',
+  );
   if (!fs.existsSync(credPath)) return null;
   try {
     return JSON.parse(fs.readFileSync(credPath, 'utf-8'));
@@ -54,7 +58,9 @@ async function getApiToken(): Promise<string | null> {
   if (!creds) return null;
 
   try {
-    const auth = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString('base64');
+    const auth = Buffer.from(
+      `${creds.clientId}:${creds.clientSecret}`,
+    ).toString('base64');
     const resp = await axios.post(
       'https://www.reddit.com/api/v1/access_token',
       'grant_type=client_credentials',
@@ -65,7 +71,7 @@ async function getApiToken(): Promise<string | null> {
           'User-Agent': creds.userAgent || 'NanoClaw-Monitor/1.0',
         },
         timeout: 10000,
-      }
+      },
     );
     apiToken = resp.data.access_token;
     apiTokenExpires = Date.now() + (resp.data.expires_in - 60) * 1000;
@@ -87,7 +93,7 @@ async function apiSearch(
   subreddit: string,
   keywords: string[],
   timeFilter: string,
-  limit: number
+  limit: number,
 ): Promise<RedditPost[]> {
   const token = await getApiToken();
   if (!token) throw new Error('no-api');
@@ -96,19 +102,28 @@ async function apiSearch(
   const resp = await axios.get(
     `https://oauth.reddit.com/r/${subreddit}/search.json`,
     {
-      params: { q: query, restrict_sr: 'on', sort: 'new', t: timeFilter, limit },
+      params: {
+        q: query,
+        restrict_sr: 'on',
+        sort: 'new',
+        t: timeFilter,
+        limit,
+      },
       headers: {
         Authorization: `Bearer ${token}`,
         'User-Agent': getUserAgent(),
       },
       timeout: 15000,
-    }
+    },
   );
 
   return resp.data.data.children.map((child: any) => mapApiPost(child.data));
 }
 
-async function apiGetNew(subreddit: string, limit: number): Promise<RedditPost[]> {
+async function apiGetNew(
+  subreddit: string,
+  limit: number,
+): Promise<RedditPost[]> {
   const token = await getApiToken();
   if (!token) throw new Error('no-api');
 
@@ -121,7 +136,7 @@ async function apiGetNew(subreddit: string, limit: number): Promise<RedditPost[]
         'User-Agent': getUserAgent(),
       },
       timeout: 15000,
-    }
+    },
   );
 
   return resp.data.data.children.map((child: any) => mapApiPost(child.data));
@@ -145,14 +160,17 @@ function mapApiPost(data: any): RedditPost {
 
 // --- Public feed backend (no auth) ---
 
-async function publicGetNew(subreddit: string, limit: number): Promise<RedditPost[]> {
+async function publicGetNew(
+  subreddit: string,
+  limit: number,
+): Promise<RedditPost[]> {
   const resp = await axios.get(
     `https://www.reddit.com/r/${subreddit}/new.json`,
     {
       params: { limit, raw_json: 1 },
       headers: { 'User-Agent': getUserAgent() },
       timeout: 15000,
-    }
+    },
   );
 
   return resp.data.data.children.map((child: any) => mapApiPost(child.data));
@@ -162,16 +180,23 @@ async function publicSearch(
   subreddit: string,
   keywords: string[],
   timeFilter: string,
-  limit: number
+  limit: number,
 ): Promise<RedditPost[]> {
   const query = keywords.join(' OR ');
   const resp = await axios.get(
     `https://www.reddit.com/r/${subreddit}/search.json`,
     {
-      params: { q: query, restrict_sr: 'on', sort: 'new', t: timeFilter, limit, raw_json: 1 },
+      params: {
+        q: query,
+        restrict_sr: 'on',
+        sort: 'new',
+        t: timeFilter,
+        limit,
+        raw_json: 1,
+      },
       headers: { 'User-Agent': getUserAgent() },
       timeout: 15000,
-    }
+    },
   );
 
   return resp.data.data.children.map((child: any) => mapApiPost(child.data));
@@ -179,8 +204,13 @@ async function publicSearch(
 
 const rssParser = new Parser();
 
-async function rssGetNew(subreddit: string, limit: number): Promise<RedditPost[]> {
-  const feed = await rssParser.parseURL(`https://www.reddit.com/r/${subreddit}/new/.rss?limit=${limit}`);
+async function rssGetNew(
+  subreddit: string,
+  limit: number,
+): Promise<RedditPost[]> {
+  const feed = await rssParser.parseURL(
+    `https://www.reddit.com/r/${subreddit}/new/.rss?limit=${limit}`,
+  );
 
   return feed.items.map((item) => ({
     id: item.guid || item.link || '',
@@ -206,14 +236,16 @@ export async function searchSubreddit(
   subreddit: string,
   keywords: string[],
   timeFilter: 'hour' | 'day' | 'week' | 'month' = 'day',
-  limit: number = 25
+  limit: number = 25,
 ): Promise<RedditPost[]> {
   // Try API first
   if (hasApiCredentials()) {
     try {
       return await apiSearch(subreddit, keywords, timeFilter, limit);
     } catch (err) {
-      console.error(`API search failed for r/${subreddit}, falling back to public`);
+      console.error(
+        `API search failed for r/${subreddit}, falling back to public`,
+      );
     }
   }
 
@@ -228,10 +260,12 @@ export async function searchSubreddit(
   try {
     const posts = await rssGetNew(subreddit, 100);
     const lowerKeywords = keywords.map((k) => k.toLowerCase());
-    return posts.filter((p) => {
-      const text = `${p.title} ${p.selftext}`.toLowerCase();
-      return lowerKeywords.some((kw) => text.includes(kw));
-    }).slice(0, limit);
+    return posts
+      .filter((p) => {
+        const text = `${p.title} ${p.selftext}`.toLowerCase();
+        return lowerKeywords.some((kw) => text.includes(kw));
+      })
+      .slice(0, limit);
   } catch (err) {
     console.error(`All backends failed for r/${subreddit}`);
     return [];
@@ -244,7 +278,7 @@ export async function searchSubreddit(
  */
 export async function getNewPosts(
   subreddit: string,
-  limit: number = 25
+  limit: number = 25,
 ): Promise<RedditPost[]> {
   if (hasApiCredentials()) {
     try {
@@ -274,7 +308,7 @@ export async function getNewPosts(
 export async function getPostsSince(
   subreddit: string,
   sinceTimestamp: number,
-  limit: number = 100
+  limit: number = 100,
 ): Promise<RedditPost[]> {
   const posts = await getNewPosts(subreddit, limit);
   return posts.filter((post) => post.created > sinceTimestamp);
@@ -286,7 +320,7 @@ export async function getPostsSince(
 export async function monitorSubreddits(
   subreddits: string[],
   keywords: string[],
-  sinceTimestamp: number
+  sinceTimestamp: number,
 ): Promise<RedditPost[]> {
   const allPosts: RedditPost[] = [];
 
@@ -317,7 +351,7 @@ export function scorePost(post: RedditPost, userSkills: string[]): number {
   if (text.includes('experienced') || text.includes('expert')) score += 1;
 
   const skillMatches = userSkills.filter((skill) =>
-    text.includes(skill.toLowerCase())
+    text.includes(skill.toLowerCase()),
   ).length;
   score += Math.min(skillMatches, 3);
 
@@ -337,7 +371,7 @@ export function scorePost(post: RedditPost, userSkills: string[]): number {
 export function filterByScore(
   posts: RedditPost[],
   userSkills: string[],
-  minScore: number = 7
+  minScore: number = 7,
 ): Array<RedditPost & { relevanceScore: number }> {
   return posts
     .map((post) => ({
@@ -352,7 +386,7 @@ export function filterByScore(
  * Format posts for WhatsApp display
  */
 export function formatPostsForWhatsApp(
-  posts: Array<RedditPost & { relevanceScore?: number }>
+  posts: Array<RedditPost & { relevanceScore?: number }>,
 ): string {
   if (posts.length === 0) return 'No relevant posts found.';
 
@@ -360,7 +394,9 @@ export function formatPostsForWhatsApp(
     .slice(0, 10)
     .map((post, i) => {
       const time = new Date(post.created * 1000).toLocaleString();
-      const scoreStr = post.relevanceScore ? ` [Score: ${post.relevanceScore}/10]` : '';
+      const scoreStr = post.relevanceScore
+        ? ` [Score: ${post.relevanceScore}/10]`
+        : '';
       const flair = post.linkFlairText ? ` [${post.linkFlairText}]` : '';
 
       return `${i + 1}. r/${post.subreddit}${flair}${scoreStr}

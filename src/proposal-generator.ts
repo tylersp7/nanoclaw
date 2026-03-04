@@ -48,17 +48,29 @@ interface GeneratedProposal {
 let anthropicClient: Anthropic | null = null;
 
 function loadConfig(): ProposalConfig {
-  const configPath = path.join(os.homedir(), '.nanoclaw-proposals', 'config.json');
+  const configPath = path.join(
+    os.homedir(),
+    '.nanoclaw-proposals',
+    'config.json',
+  );
   if (!fs.existsSync(configPath)) {
-    throw new Error('Proposal generator config not found. Run /add-proposal-generator');
+    throw new Error(
+      'Proposal generator config not found. Run /add-proposal-generator',
+    );
   }
   return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 }
 
 function loadProfile(): UserProfile {
-  const profilePath = path.join(os.homedir(), '.nanoclaw-proposals', 'profile.json');
+  const profilePath = path.join(
+    os.homedir(),
+    '.nanoclaw-proposals',
+    'profile.json',
+  );
   if (!fs.existsSync(profilePath)) {
-    throw new Error('Profile not found. Create ~/.nanoclaw-proposals/profile.json');
+    throw new Error(
+      'Profile not found. Create ~/.nanoclaw-proposals/profile.json',
+    );
   }
   return JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
 }
@@ -80,7 +92,7 @@ export async function generateProposal(
     tone?: 'professional' | 'friendly' | 'technical';
     length?: 'short' | 'medium' | 'long';
     includePrice?: boolean;
-  }
+  },
 ): Promise<GeneratedProposal> {
   const client = getClient();
   const config = loadConfig();
@@ -98,11 +110,15 @@ Title: ${profile.title}
 Skills: ${profile.skills.join(', ')}
 
 RELEVANT EXPERIENCE:
-${profile.experience.map(exp => `
+${profile.experience
+  .map(
+    (exp) => `
 - ${exp.name}: ${exp.description}
   Technologies: ${exp.technologies.join(', ')}
   Outcomes: ${exp.outcomes.join(', ')}
-`).join('\n')}
+`,
+  )
+  .join('\n')}
 
 RATES:
 Hourly: $${profile.rates.hourly.preferred}/hr (range: $${profile.rates.hourly.minimum}-${profile.rates.hourly.maximum})
@@ -172,7 +188,7 @@ Keep the proposal natural - avoid corporate jargon, buzzwords, or overly formal 
  */
 export async function generateProposalVariations(
   job: JobDetails,
-  count: number = 3
+  count: number = 3,
 ): Promise<GeneratedProposal[]> {
   const variations = await Promise.all([
     generateProposal(job, { tone: 'professional', length: 'medium' }),
@@ -188,7 +204,7 @@ export async function generateProposalVariations(
  */
 export async function improveProposal(
   originalProposal: string,
-  feedback: string
+  feedback: string,
 ): Promise<string> {
   const client = getClient();
   const config = loadConfig();
@@ -292,7 +308,7 @@ ${proposal.proposal}
 *Confidence:* ${proposal.confidence}
 
 *Key Points:*
-${proposal.keyPoints.map(point => `• ${point}`).join('\n')}
+${proposal.keyPoints.map((point) => `• ${point}`).join('\n')}
 
 ---
 Edit as needed before sending!`;
@@ -304,9 +320,13 @@ Edit as needed before sending!`;
 export function saveTemplate(
   name: string,
   proposal: string,
-  jobType: string
+  jobType: string,
 ): void {
-  const templatesDir = path.join(os.homedir(), '.nanoclaw-proposals', 'templates');
+  const templatesDir = path.join(
+    os.homedir(),
+    '.nanoclaw-proposals',
+    'templates',
+  );
   fs.mkdirSync(templatesDir, { recursive: true });
 
   const template = {
@@ -316,6 +336,9 @@ export function saveTemplate(
     savedAt: new Date().toISOString(),
   };
 
-  const templateFile = path.join(templatesDir, `${name.replace(/\s+/g, '-').toLowerCase()}.json`);
+  const templateFile = path.join(
+    templatesDir,
+    `${name.replace(/\s+/g, '-').toLowerCase()}.json`,
+  );
   fs.writeFileSync(templateFile, JSON.stringify(template, null, 2));
 }

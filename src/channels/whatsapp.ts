@@ -18,6 +18,7 @@ import {
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
+import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
 import { logger } from '../logger.js';
 import {
@@ -77,10 +78,16 @@ export class WhatsAppChannel implements Channel {
         waVersion = version as [number, number, number];
         logger.info({ version: waVersion }, 'Fetched latest WA Web version');
       } else {
-        logger.warn({ error, fallback: FALLBACK_VERSION }, 'Could not fetch latest WA version, using fallback');
+        logger.warn(
+          { error, fallback: FALLBACK_VERSION },
+          'Could not fetch latest WA version, using fallback',
+        );
       }
     } catch (err) {
-      logger.warn({ err, fallback: FALLBACK_VERSION }, 'Failed to fetch WA version, using fallback');
+      logger.warn(
+        { err, fallback: FALLBACK_VERSION },
+        'Failed to fetch WA version, using fallback',
+      );
     }
 
     this.sock = makeWASocket({
@@ -99,25 +106,42 @@ export class WhatsAppChannel implements Channel {
       // Request pairing code when QR is offered (socket is ready for auth)
       if (qr && needsAuth && !pairingCodeRequested) {
         pairingCodeRequested = true;
-        const phoneNumber = typeof ASSISTANT_HAS_OWN_NUMBER === 'string' ? ASSISTANT_HAS_OWN_NUMBER : '19706923038';
+        const phoneNumber =
+          typeof ASSISTANT_HAS_OWN_NUMBER === 'string'
+            ? ASSISTANT_HAS_OWN_NUMBER
+            : '19706923038';
         logger.info({ phoneNumber }, 'Requesting pairing code instead of QR');
-        this.sock.requestPairingCode(phoneNumber).then((code) => {
-          const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
-          logger.info({ code: formattedCode }, 'PAIRING CODE — enter in WhatsApp > Linked Devices > Link with phone number');
-          exec(
-            `osascript -e 'display dialog "WhatsApp Pairing Code: ${formattedCode}\\n\\nOpen WhatsApp on phone > Linked Devices > Link a Device > Link with phone number instead" with title "NanoClaw" buttons {"OK"} default button "OK"'`,
-          );
-          fs.writeFileSync('/tmp/nanoclaw-pairing-code.txt', `${formattedCode}\n`);
-        }).catch((err) => {
-          logger.error({ err }, 'Failed to request pairing code, falling back to QR');
-          // Fall back to QR code
-          import('qrcode').then(m => {
-            const qrPath = '/tmp/nanoclaw-qr.png';
-            m.default.toFile(qrPath, qr, { scale: 8 }, () => {
-              exec(`open "${qrPath}"`);
-            });
-          }).catch(() => {});
-        });
+        this.sock
+          .requestPairingCode(phoneNumber)
+          .then((code) => {
+            const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+            logger.info(
+              { code: formattedCode },
+              'PAIRING CODE — enter in WhatsApp > Linked Devices > Link with phone number',
+            );
+            exec(
+              `osascript -e 'display dialog "WhatsApp Pairing Code: ${formattedCode}\\n\\nOpen WhatsApp on phone > Linked Devices > Link a Device > Link with phone number instead" with title "NanoClaw" buttons {"OK"} default button "OK"'`,
+            );
+            fs.writeFileSync(
+              '/tmp/nanoclaw-pairing-code.txt',
+              `${formattedCode}\n`,
+            );
+          })
+          .catch((err) => {
+            logger.error(
+              { err },
+              'Failed to request pairing code, falling back to QR',
+            );
+            // Fall back to QR code
+            import('qrcode')
+              .then((m) => {
+                const qrPath = '/tmp/nanoclaw-qr.png';
+                m.default.toFile(qrPath, qr, { scale: 8 }, () => {
+                  exec(`open "${qrPath}"`);
+                });
+              })
+              .catch(() => {});
+          });
       } else if (qr && !needsAuth) {
         // Already registered but session expired — show QR
         const msg = 'WhatsApp re-authentication required.';
@@ -125,12 +149,14 @@ export class WhatsAppChannel implements Channel {
         exec(
           `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
         );
-        import('qrcode').then(m => {
-          const qrPath = '/tmp/nanoclaw-qr.png';
-          m.default.toFile(qrPath, qr, { scale: 8 }, () => {
-            exec(`open "${qrPath}"`);
-          });
-        }).catch(() => {});
+        import('qrcode')
+          .then((m) => {
+            const qrPath = '/tmp/nanoclaw-qr.png';
+            m.default.toFile(qrPath, qr, { scale: 8 }, () => {
+              exec(`open "${qrPath}"`);
+            });
+          })
+          .catch(() => {});
       }
 
       if (connection === 'close') {
@@ -153,12 +179,15 @@ export class WhatsAppChannel implements Channel {
           // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s, ... capped at 5 min
           const baseDelay = Math.min(
             2000 * Math.pow(2, this.reconnectAttempts - 1),
-            WhatsAppChannel.MAX_RECONNECT_DELAY_MS
+            WhatsAppChannel.MAX_RECONNECT_DELAY_MS,
           );
           // Add jitter (±25%) to prevent thundering herd
           const jitter = baseDelay * 0.25 * (Math.random() * 2 - 1);
           const delay = Math.round(baseDelay + jitter);
-          logger.info({ attempt: this.reconnectAttempts, delayMs: delay }, `Reconnecting in ${Math.round(delay / 1000)}s...`);
+          logger.info(
+            { attempt: this.reconnectAttempts, delayMs: delay },
+            `Reconnecting in ${Math.round(delay / 1000)}s...`,
+          );
           setTimeout(() => {
             this.connectInternal().catch((err) => {
               logger.error({ err }, 'Reconnection failed');
@@ -251,8 +280,28 @@ export class WhatsAppChannel implements Channel {
             msg.message?.videoMessage?.caption ||
             '';
 
+          // Voice message transcription
+          let finalContent = content;
+          if (isVoiceMessage(msg)) {
+            try {
+              const transcript = await transcribeAudioMessage(msg, this.sock);
+              if (transcript) {
+                finalContent = `[Voice: ${transcript}]`;
+                logger.info(
+                  { chatJid, chars: transcript.length },
+                  'Transcribed voice message',
+                );
+              } else {
+                finalContent = '[Voice Message - transcription unavailable]';
+              }
+            } catch (err) {
+              logger.error({ err, chatJid }, 'Voice transcription failed');
+              finalContent = '[Voice Message - transcription failed]';
+            }
+          }
+
           // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-          if (!content) continue;
+          if (!finalContent) continue;
 
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
@@ -264,16 +313,21 @@ export class WhatsAppChannel implements Channel {
           // (even in DMs/self-chat) so we check for that.
           const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
             ? fromMe
-            : content.startsWith(`${ASSISTANT_NAME}:`);
+            : finalContent.startsWith(`${ASSISTANT_NAME}:`);
 
           // Download image if present
           let mediaPath: string | undefined;
           if (msg.message?.imageMessage) {
             try {
-              const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
-                logger,
-                reuploadRequest: this.sock.updateMediaMessage,
-              });
+              const buffer = await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                {
+                  logger,
+                  reuploadRequest: this.sock.updateMediaMessage,
+                },
+              );
               if (buffer.length <= 15 * 1024 * 1024) {
                 const mime = msg.message.imageMessage.mimetype || 'image/jpeg';
                 const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
@@ -283,9 +337,15 @@ export class WhatsAppChannel implements Channel {
                 const filename = `${msg.key.id}.${ext}`;
                 fs.writeFileSync(path.join(mediaDir, filename), buffer);
                 mediaPath = `media/${filename}`;
-                logger.info({ chatJid, mediaPath, size: buffer.length }, 'Downloaded image');
+                logger.info(
+                  { chatJid, mediaPath, size: buffer.length },
+                  'Downloaded image',
+                );
               } else {
-                logger.warn({ chatJid, size: buffer.length }, 'Image too large, skipping download');
+                logger.warn(
+                  { chatJid, size: buffer.length },
+                  'Image too large, skipping download',
+                );
               }
             } catch (err) {
               logger.error({ err, chatJid }, 'Failed to download image');
@@ -297,7 +357,7 @@ export class WhatsAppChannel implements Channel {
             chat_jid: chatJid,
             sender,
             sender_name: senderName,
-            content,
+            content: finalContent,
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,

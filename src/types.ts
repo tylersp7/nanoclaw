@@ -32,6 +32,12 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
+export interface MessageDestination {
+  name: string; // "reminders", "alerts", "findings"
+  targetJid: string; // "tg:12345", "slack:C0123", "120363...@g.us"
+  description?: string;
+}
+
 export interface RegisteredGroup {
   name: string;
   folder: string;
@@ -39,6 +45,7 @@ export interface RegisteredGroup {
   added_at: string;
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
+  destinations?: MessageDestination[];
 }
 
 export interface NewMessage {
@@ -66,19 +73,24 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
-  pipeline_steps?: string | null;  // JSON string of PipelineStep[]
-  pipeline_state?: string | null;  // JSON string of PipelineState
-  task_category?: string | null;   // Queue sharding key for parallel execution
+  pipeline_steps?: string | null; // JSON string of PipelineStep[]
+  pipeline_state?: string | null; // JSON string of PipelineState
+  task_category?: string | null; // Queue sharding key for parallel execution
 }
 
 // Pipeline step definition (stored as JSON in scheduled_tasks.pipeline_steps)
 export interface PipelineStep {
   name: string;
   prompt: string;
-  skipIf?: string;        // Expression evaluated against prior output
-  timeout?: number;       // Override CONTAINER_TIMEOUT for this step
+  skipIf?: string; // Expression evaluated against prior output
+  timeout?: number; // Override CONTAINER_TIMEOUT for this step
   context_mode?: 'group' | 'isolated';
   parallel_group?: string; // Steps with same parallel_group run concurrently
+  qaGate?: {
+    enabled: boolean;
+    maxRetries?: number; // Default: 3
+    qaPrompt?: string; // Custom QA prompt (default: generic validation)
+  };
 }
 
 // Pipeline execution state (stored as JSON in scheduled_tasks.pipeline_state)
@@ -86,14 +98,18 @@ export interface PipelineState {
   run_id: string;
   current_step: number;
   completed_steps: number[];
-  step_outputs: Record<number, string>;  // step index → output text
+  step_outputs: Record<number, string>; // step index → output text
   started_at: string;
   status: 'running' | 'completed' | 'error' | 'paused';
   error?: string;
 }
 
 // Follow-up signal types
-export type FollowUpSignal = 'LEAD_FOUND' | 'ACTION_NEEDED' | 'AUTO_REMEDIATE' | 'ESCALATE';
+export type FollowUpSignal =
+  | 'LEAD_FOUND'
+  | 'ACTION_NEEDED'
+  | 'AUTO_REMEDIATE'
+  | 'ESCALATE';
 
 // Follow-up action definition
 export interface FollowUpAction {

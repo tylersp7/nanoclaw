@@ -6,11 +6,17 @@ import os from 'os';
 let calendarClient: any = null;
 
 function loadCredentials() {
-  const credPath = path.join(os.homedir(), '.nanoclaw-calendar', 'credentials.json');
+  const credPath = path.join(
+    os.homedir(),
+    '.nanoclaw-calendar',
+    'credentials.json',
+  );
   const tokenPath = path.join(os.homedir(), '.nanoclaw-calendar', 'token.json');
 
   if (!fs.existsSync(credPath) || !fs.existsSync(tokenPath)) {
-    throw new Error('Calendar not authenticated. Run: node scripts/calendar-auth.js');
+    throw new Error(
+      'Calendar not authenticated. Run: node scripts/calendar-auth.js',
+    );
   }
 
   const credentials = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
@@ -53,7 +59,7 @@ export interface CalendarEvent {
  */
 export async function getEvents(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
 ): Promise<CalendarEvent[]> {
   const calendar = getCalendar();
 
@@ -82,7 +88,7 @@ export async function getEvents(
 export async function findAvailableSlots(
   date: Date,
   durationMinutes: number = 60,
-  businessHoursOnly: boolean = true
+  businessHoursOnly: boolean = true,
 ): Promise<Array<{ start: Date; end: Date }>> {
   const startOfDay = new Date(date);
   startOfDay.setHours(businessHoursOnly ? 9 : 0, 0, 0, 0);
@@ -99,17 +105,28 @@ export async function findAvailableSlots(
     const eventStart = new Date(event.start);
     const eventEnd = new Date(event.end);
 
-    if (eventStart.getTime() - currentTime.getTime() >= durationMinutes * 60 * 1000) {
+    if (
+      eventStart.getTime() - currentTime.getTime() >=
+      durationMinutes * 60 * 1000
+    ) {
       slots.push({
         start: new Date(currentTime),
-        end: new Date(Math.min(eventStart.getTime(), currentTime.getTime() + durationMinutes * 60 * 1000)),
+        end: new Date(
+          Math.min(
+            eventStart.getTime(),
+            currentTime.getTime() + durationMinutes * 60 * 1000,
+          ),
+        ),
       });
     }
 
     currentTime = eventEnd;
   }
 
-  if (endOfDay.getTime() - currentTime.getTime() >= durationMinutes * 60 * 1000) {
+  if (
+    endOfDay.getTime() - currentTime.getTime() >=
+    durationMinutes * 60 * 1000
+  ) {
     slots.push({
       start: new Date(currentTime),
       end: new Date(currentTime.getTime() + durationMinutes * 60 * 1000),
@@ -130,7 +147,7 @@ export async function createEvent(
     description?: string;
     attendees?: string[];
     location?: string;
-  }
+  },
 ): Promise<string> {
   const calendar = getCalendar();
 
@@ -161,7 +178,7 @@ export async function createEvent(
 export async function blockDeepWorkTime(
   date: Date,
   hours: number,
-  label: string = 'Deep Work'
+  label: string = 'Deep Work',
 ): Promise<string> {
   const start = new Date(date);
   const end = new Date(date);
@@ -239,10 +256,22 @@ export function formatEventsForWhatsApp(events: CalendarEvent[]): string {
     .map((event, i) => {
       const start = new Date(event.start);
       const end = new Date(event.end);
-      const day = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      const startTime = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      const endTime = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      const attendees = event.attendees?.length ? `\n   With: ${event.attendees.join(', ')}` : '';
+      const day = start.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      });
+      const startTime = start.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      const endTime = end.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      const attendees = event.attendees?.length
+        ? `\n   With: ${event.attendees.join(', ')}`
+        : '';
       const location = event.location ? `\n   Location: ${event.location}` : '';
 
       return `${i + 1}. *${event.summary}*\n   ${day} ${startTime} - ${endTime}${attendees}${location}`;
@@ -253,7 +282,9 @@ export function formatEventsForWhatsApp(events: CalendarEvent[]): string {
 /**
  * Format availability for WhatsApp
  */
-export function formatAvailability(slots: Array<{ start: Date; end: Date }>): string {
+export function formatAvailability(
+  slots: Array<{ start: Date; end: Date }>,
+): string {
   if (slots.length === 0) return 'No availability found.';
 
   return slots
@@ -264,8 +295,14 @@ export function formatAvailability(slots: Array<{ start: Date; end: Date }>): st
         month: 'short',
         day: 'numeric',
       });
-      const startTime = slot.start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      const endTime = slot.end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const startTime = slot.start.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      const endTime = slot.end.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
       return `${i + 1}. ${day} ${startTime} - ${endTime}`;
     })
     .join('\n');

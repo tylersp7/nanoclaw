@@ -5,7 +5,10 @@
 import { Client } from '@hubspot/api-client';
 import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/contacts/models/Filter.js';
 import { AssociationSpecAssociationCategoryEnum } from '@hubspot/api-client/lib/codegen/crm/contacts/models/AssociationSpec.js';
-import { PropertyCreateTypeEnum, PropertyCreateFieldTypeEnum } from '@hubspot/api-client/lib/codegen/crm/properties/models/PropertyCreate.js';
+import {
+  PropertyCreateTypeEnum,
+  PropertyCreateFieldTypeEnum,
+} from '@hubspot/api-client/lib/codegen/crm/properties/models/PropertyCreate.js';
 
 import type { Lead } from './crm-helper.js';
 import { logger } from './logger.js';
@@ -40,10 +43,10 @@ export interface HubSpotStats {
 // ---------------------------------------------------------------------------
 
 const STATUS_TO_STAGE: Record<string, string> = {
-  new: 'appointmentscheduled',           // New lead (not pending)
-  contacted: 'appointmentscheduled',     // Initial contact made
-  responded: 'qualifiedtobuy',           // They responded - qualified
-  interview: 'presentationscheduled',    // Interview scheduled
+  new: 'appointmentscheduled', // New lead (not pending)
+  contacted: 'appointmentscheduled', // Initial contact made
+  responded: 'qualifiedtobuy', // They responded - qualified
+  interview: 'presentationscheduled', // Interview scheduled
   proposal_sent: 'decisionmakerboughtin', // Proposal sent
   won: 'closedwon',
   lost: 'closedlost',
@@ -57,7 +60,7 @@ const STATUS_TO_STAGE: Record<string, string> = {
 let hubspotClient: Client | null = null;
 
 export function isHubSpotConfigured(): boolean {
-  return !!(process.env.HUBSPOT_TOKEN);
+  return !!process.env.HUBSPOT_TOKEN;
 }
 
 export function initHubSpot(): Client {
@@ -88,8 +91,9 @@ async function rateLimited<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
     try {
       return await fn();
     } catch (err: unknown) {
-      const status = (err as { code?: number; statusCode?: number })?.code
-        ?? (err as { code?: number; statusCode?: number })?.statusCode;
+      const status =
+        (err as { code?: number; statusCode?: number })?.code ??
+        (err as { code?: number; statusCode?: number })?.statusCode;
       if (status === 429 && attempt < retries) {
         const delay = Math.pow(2, attempt + 1) * 1000;
         logger.warn({ attempt, delay }, 'HubSpot rate limited, backing off');
@@ -107,18 +111,30 @@ async function rateLimited<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
 // Token Validation
 // ---------------------------------------------------------------------------
 
-export async function validateToken(): Promise<{ valid: boolean; portalId?: string; error?: string }> {
+export async function validateToken(): Promise<{
+  valid: boolean;
+  portalId?: string;
+  error?: string;
+}> {
   try {
     const client = initHubSpot();
     const resp = await client.crm.contacts.basicApi.getPage(1);
     // If we get here, token is valid.
-    return { valid: true, portalId: resp.results.length > 0 ? 'connected' : 'connected (empty)' };
+    return {
+      valid: true,
+      portalId: resp.results.length > 0 ? 'connected' : 'connected (empty)',
+    };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    const status = (err as { code?: number; statusCode?: number })?.code
-      ?? (err as { code?: number; statusCode?: number })?.statusCode;
+    const status =
+      (err as { code?: number; statusCode?: number })?.code ??
+      (err as { code?: number; statusCode?: number })?.statusCode;
     if (status === 401 || status === 403) {
-      return { valid: false, error: 'Token invalid or expired. Go to HubSpot > Settings > Integrations > Private Apps and generate a new token.' };
+      return {
+        valid: false,
+        error:
+          'Token invalid or expired. Go to HubSpot > Settings > Integrations > Private Apps and generate a new token.',
+      };
     }
     return { valid: false, error: msg };
   }
@@ -129,35 +145,147 @@ export async function validateToken(): Promise<{ valid: boolean; portalId?: stri
 // ---------------------------------------------------------------------------
 
 const CONTACT_PROPERTIES = [
-  { name: 'lead_source_platform', label: 'Lead Source Platform', type: 'enumeration', fieldType: 'select',
-    options: ['reddit', 'hn', 'upwork', 'fiverr', 'freelancer', 'github', 'n8n', 'linkedin', 'referral'].map(v => ({ label: v, value: v })) },
-  { name: 'lead_source_url', label: 'Lead Source URL', type: 'string', fieldType: 'text' },
-  { name: 'lead_quality_score', label: 'Lead Quality Score', type: 'number', fieldType: 'number' },
-  { name: 'tech_stack', label: 'Tech Stack', type: 'string', fieldType: 'text' },
-  { name: 'budget_range', label: 'Budget Range', type: 'enumeration', fieldType: 'select',
-    options: ['unknown', 'under_1k', '1k_5k', '5k_10k', 'over_10k'].map(v => ({ label: v, value: v })) },
-  { name: 'lead_status_detail', label: 'Lead Status Detail', type: 'enumeration', fieldType: 'select',
-    options: ['new', 'contacted', 'responded', 'interview', 'proposal_sent', 'won', 'lost', 'skipped'].map(v => ({ label: v, value: v })) },
-  { name: 'first_seen_date', label: 'First Seen Date', type: 'date', fieldType: 'date' },
-  { name: 'last_activity_date', label: 'Lead Last Activity', type: 'date', fieldType: 'date' },
-  { name: 'monitor_id', label: 'Monitor ID', type: 'string', fieldType: 'text' },
-  { name: 'notes_summary', label: 'Notes Summary', type: 'string', fieldType: 'textarea' },
+  {
+    name: 'lead_source_platform',
+    label: 'Lead Source Platform',
+    type: 'enumeration',
+    fieldType: 'select',
+    options: [
+      'reddit',
+      'hn',
+      'upwork',
+      'fiverr',
+      'freelancer',
+      'github',
+      'n8n',
+      'linkedin',
+      'referral',
+    ].map((v) => ({ label: v, value: v })),
+  },
+  {
+    name: 'lead_source_url',
+    label: 'Lead Source URL',
+    type: 'string',
+    fieldType: 'text',
+  },
+  {
+    name: 'lead_quality_score',
+    label: 'Lead Quality Score',
+    type: 'number',
+    fieldType: 'number',
+  },
+  {
+    name: 'tech_stack',
+    label: 'Tech Stack',
+    type: 'string',
+    fieldType: 'text',
+  },
+  {
+    name: 'budget_range',
+    label: 'Budget Range',
+    type: 'enumeration',
+    fieldType: 'select',
+    options: ['unknown', 'under_1k', '1k_5k', '5k_10k', 'over_10k'].map(
+      (v) => ({ label: v, value: v }),
+    ),
+  },
+  {
+    name: 'lead_status_detail',
+    label: 'Lead Status Detail',
+    type: 'enumeration',
+    fieldType: 'select',
+    options: [
+      'new',
+      'contacted',
+      'responded',
+      'interview',
+      'proposal_sent',
+      'won',
+      'lost',
+      'skipped',
+    ].map((v) => ({ label: v, value: v })),
+  },
+  {
+    name: 'first_seen_date',
+    label: 'First Seen Date',
+    type: 'date',
+    fieldType: 'date',
+  },
+  {
+    name: 'last_activity_date',
+    label: 'Lead Last Activity',
+    type: 'date',
+    fieldType: 'date',
+  },
+  {
+    name: 'monitor_id',
+    label: 'Monitor ID',
+    type: 'string',
+    fieldType: 'text',
+  },
+  {
+    name: 'notes_summary',
+    label: 'Notes Summary',
+    type: 'string',
+    fieldType: 'textarea',
+  },
 ];
 
 const DEAL_PROPERTIES = [
-  { name: 'project_type', label: 'Project Type', type: 'enumeration', fieldType: 'select',
-    options: ['automation', 'integration', 'consulting', 'development', 'maintenance', 'other'].map(v => ({ label: v, value: v })) },
-  { name: 'estimated_hours', label: 'Estimated Hours', type: 'number', fieldType: 'number' },
-  { name: 'original_post_url', label: 'Original Post URL', type: 'string', fieldType: 'text' },
-  { name: 'platform_fee_pct', label: 'Platform Fee %', type: 'number', fieldType: 'number' },
-  { name: 'contract_type', label: 'Contract Type', type: 'enumeration', fieldType: 'select',
-    options: ['fixed', 'hourly', 'retainer', 'milestone', 'other'].map(v => ({ label: v, value: v })) },
+  {
+    name: 'project_type',
+    label: 'Project Type',
+    type: 'enumeration',
+    fieldType: 'select',
+    options: [
+      'automation',
+      'integration',
+      'consulting',
+      'development',
+      'maintenance',
+      'other',
+    ].map((v) => ({ label: v, value: v })),
+  },
+  {
+    name: 'estimated_hours',
+    label: 'Estimated Hours',
+    type: 'number',
+    fieldType: 'number',
+  },
+  {
+    name: 'original_post_url',
+    label: 'Original Post URL',
+    type: 'string',
+    fieldType: 'text',
+  },
+  {
+    name: 'platform_fee_pct',
+    label: 'Platform Fee %',
+    type: 'number',
+    fieldType: 'number',
+  },
+  {
+    name: 'contract_type',
+    label: 'Contract Type',
+    type: 'enumeration',
+    fieldType: 'select',
+    options: ['fixed', 'hourly', 'retainer', 'milestone', 'other'].map((v) => ({
+      label: v,
+      value: v,
+    })),
+  },
 ];
 
 async function createPropertySafe(
   client: Client,
   objectType: string,
-  prop: { name: string; label: string; type: string; fieldType: string; options?: Array<{ label: string; value: string }> },
+  prop: {
+    name: string;
+    label: string;
+    type: string;
+    fieldType: string;
+    options?: Array<{ label: string; value: string }>;
+  },
 ): Promise<boolean> {
   try {
     await rateLimited(() =>
@@ -167,19 +295,31 @@ async function createPropertySafe(
         type: prop.type as PropertyCreateTypeEnum,
         fieldType: prop.fieldType as PropertyCreateFieldTypeEnum,
         groupName: 'nanoclaw',
-        ...(prop.options ? { options: prop.options.map((o, i) => ({ ...o, displayOrder: i, hidden: false })) } : {}),
+        ...(prop.options
+          ? {
+              options: prop.options.map((o, i) => ({
+                ...o,
+                displayOrder: i,
+                hidden: false,
+              })),
+            }
+          : {}),
       }),
     );
     return true;
   } catch (err: unknown) {
-    const status = (err as { code?: number; statusCode?: number })?.code
-      ?? (err as { code?: number; statusCode?: number })?.statusCode;
+    const status =
+      (err as { code?: number; statusCode?: number })?.code ??
+      (err as { code?: number; statusCode?: number })?.statusCode;
     if (status === 409) return false; // already exists
     throw err;
   }
 }
 
-async function ensurePropertyGroup(client: Client, objectType: string): Promise<void> {
+async function ensurePropertyGroup(
+  client: Client,
+  objectType: string,
+): Promise<void> {
   try {
     await rateLimited(() =>
       client.crm.properties.groupsApi.create(objectType, {
@@ -193,7 +333,10 @@ async function ensurePropertyGroup(client: Client, objectType: string): Promise<
   }
 }
 
-export async function setupCustomProperties(): Promise<{ created: number; skipped: number }> {
+export async function setupCustomProperties(): Promise<{
+  created: number;
+  skipped: number;
+}> {
   const client = initHubSpot();
   let created = 0;
   let skipped = 0;
@@ -204,12 +347,14 @@ export async function setupCustomProperties(): Promise<{ created: number; skippe
 
   for (const prop of CONTACT_PROPERTIES) {
     const wasCreated = await createPropertySafe(client, 'contacts', prop);
-    if (wasCreated) created++; else skipped++;
+    if (wasCreated) created++;
+    else skipped++;
   }
 
   for (const prop of DEAL_PROPERTIES) {
     const wasCreated = await createPropertySafe(client, 'deals', prop);
-    if (wasCreated) created++; else skipped++;
+    if (wasCreated) created++;
+    else skipped++;
   }
 
   logger.info({ created, skipped }, 'HubSpot custom properties setup complete');
@@ -230,9 +375,17 @@ export async function lookupContact(
     try {
       const resp = await rateLimited(() =>
         client.crm.contacts.searchApi.doSearch({
-          filterGroups: [{
-            filters: [{ propertyName: 'email', operator: FilterOperatorEnum.Eq, value: query }],
-          }],
+          filterGroups: [
+            {
+              filters: [
+                {
+                  propertyName: 'email',
+                  operator: FilterOperatorEnum.Eq,
+                  value: query,
+                },
+              ],
+            },
+          ],
           properties: ['email', 'monitor_id', 'firstname', 'lastname'],
           limit: 1,
           after: '0',
@@ -241,7 +394,11 @@ export async function lookupContact(
       );
       if (resp.results.length > 0) {
         const c = resp.results[0];
-        return { id: c.id, email: c.properties.email ?? undefined, monitorId: c.properties.monitor_id ?? undefined };
+        return {
+          id: c.id,
+          email: c.properties.email ?? undefined,
+          monitorId: c.properties.monitor_id ?? undefined,
+        };
       }
     } catch (err) {
       logger.warn({ err, query }, 'HubSpot contact search by email failed');
@@ -252,9 +409,17 @@ export async function lookupContact(
   try {
     const resp = await rateLimited(() =>
       client.crm.contacts.searchApi.doSearch({
-        filterGroups: [{
-          filters: [{ propertyName: 'monitor_id', operator: FilterOperatorEnum.Eq, value: query }],
-        }],
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: 'monitor_id',
+                operator: FilterOperatorEnum.Eq,
+                value: query,
+              },
+            ],
+          },
+        ],
         properties: ['email', 'monitor_id', 'firstname', 'lastname'],
         limit: 1,
         after: '0',
@@ -263,7 +428,11 @@ export async function lookupContact(
     );
     if (resp.results.length > 0) {
       const c = resp.results[0];
-      return { id: c.id, email: c.properties.email ?? undefined, monitorId: c.properties.monitor_id ?? undefined };
+      return {
+        id: c.id,
+        email: c.properties.email ?? undefined,
+        monitorId: c.properties.monitor_id ?? undefined,
+      };
     }
   } catch (err) {
     logger.warn({ err, query }, 'HubSpot contact search by monitor_id failed');
@@ -349,17 +518,25 @@ export async function syncLead(lead: Lead): Promise<SyncResult> {
     if (lead.url) contactProps.lead_source_url = lead.url;
     if (lead.budget) contactProps.budget_range = parseBudgetRange(lead.budget);
     if (lead.notes.length > 0) {
-      contactProps.notes_summary = lead.notes.slice(-3).join('\n').substring(0, 500);
+      contactProps.notes_summary = lead.notes
+        .slice(-3)
+        .join('\n')
+        .substring(0, 500);
     }
 
     if (existing) {
       contactId = existing.id;
       await rateLimited(() =>
-        client.crm.contacts.basicApi.update(contactId, { properties: contactProps }),
+        client.crm.contacts.basicApi.update(contactId, {
+          properties: contactProps,
+        }),
       );
     } else {
       const created = await rateLimited(() =>
-        client.crm.contacts.basicApi.create({ properties: contactProps, associations: [] }),
+        client.crm.contacts.basicApi.create({
+          properties: contactProps,
+          associations: [],
+        }),
       );
       contactId = created.id;
     }
@@ -368,9 +545,17 @@ export async function syncLead(lead: Lead): Promise<SyncResult> {
     let dealId: string;
     const dealSearch = await rateLimited(() =>
       client.crm.deals.searchApi.doSearch({
-        filterGroups: [{
-          filters: [{ propertyName: 'original_post_url', operator: FilterOperatorEnum.Eq, value: lead.url || monitorId }],
-        }],
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: 'original_post_url',
+                operator: FilterOperatorEnum.Eq,
+                value: lead.url || monitorId,
+              },
+            ],
+          },
+        ],
         properties: ['dealname', 'dealstage', 'original_post_url'],
         limit: 1,
         after: '0',
@@ -396,15 +581,27 @@ export async function syncLead(lead: Lead): Promise<SyncResult> {
       );
     } else {
       const createdDeal = await rateLimited(() =>
-        client.crm.deals.basicApi.create({ properties: dealProps, associations: [] }),
+        client.crm.deals.basicApi.create({
+          properties: dealProps,
+          associations: [],
+        }),
       );
       dealId = createdDeal.id;
 
       // Associate deal with contact
       await rateLimited(() =>
         client.crm.associations.v4.basicApi.create(
-          'deals', dealId, 'contacts', contactId,
-          [{ associationCategory: AssociationSpecAssociationCategoryEnum.HubspotDefined, associationTypeId: 3 }],
+          'deals',
+          dealId,
+          'contacts',
+          contactId,
+          [
+            {
+              associationCategory:
+                AssociationSpecAssociationCategoryEnum.HubspotDefined,
+              associationTypeId: 3,
+            },
+          ],
         ),
       );
     }
@@ -417,7 +614,9 @@ export async function syncLead(lead: Lead): Promise<SyncResult> {
       lead.budget ? `Budget: ${lead.budget}` : null,
       lead.url ? `URL: ${lead.url}` : null,
       lead.description ? `\n${lead.description.substring(0, 500)}` : null,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     await rateLimited(() =>
       client.crm.objects.notes.basicApi.create({
@@ -428,17 +627,32 @@ export async function syncLead(lead: Lead): Promise<SyncResult> {
         associations: [
           {
             to: { id: contactId },
-            types: [{ associationCategory: AssociationSpecAssociationCategoryEnum.HubspotDefined, associationTypeId: 202 }],
+            types: [
+              {
+                associationCategory:
+                  AssociationSpecAssociationCategoryEnum.HubspotDefined,
+                associationTypeId: 202,
+              },
+            ],
           },
           {
             to: { id: dealId },
-            types: [{ associationCategory: AssociationSpecAssociationCategoryEnum.HubspotDefined, associationTypeId: 214 }],
+            types: [
+              {
+                associationCategory:
+                  AssociationSpecAssociationCategoryEnum.HubspotDefined,
+                associationTypeId: 214,
+              },
+            ],
           },
         ],
       }),
     );
 
-    logger.info({ leadId: lead.id, contactId, dealId }, 'Lead synced to HubSpot');
+    logger.info(
+      { leadId: lead.id, contactId, dealId },
+      'Lead synced to HubSpot',
+    );
     return { success: true, contactId, dealId };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -455,7 +669,8 @@ export async function syncLeadBatch(leads: Lead[]): Promise<BatchResult> {
   for (const lead of leads) {
     const result = await syncLead(lead);
     results.push({ leadId: lead.id, ...result });
-    if (result.success) synced++; else errors++;
+    if (result.success) synced++;
+    else errors++;
   }
 
   return { total: leads.length, synced, errors, results };
@@ -465,7 +680,10 @@ export async function syncLeadBatch(leads: Lead[]): Promise<BatchResult> {
 // Deal Stage Update
 // ---------------------------------------------------------------------------
 
-export async function updateDealStage(dealId: string, status: string): Promise<void> {
+export async function updateDealStage(
+  dealId: string,
+  status: string,
+): Promise<void> {
   const client = initHubSpot();
   const stage = STATUS_TO_STAGE[status];
   if (!stage) {
@@ -497,7 +715,10 @@ export async function createFollowUpTask(
   try {
     const contact = await lookupContact(lead.clientEmail || monitorId);
     if (!contact) {
-      logger.warn({ leadId: lead.id }, 'Cannot create task — contact not found in HubSpot');
+      logger.warn(
+        { leadId: lead.id },
+        'Cannot create task — contact not found in HubSpot',
+      );
       return null;
     }
 
@@ -516,13 +737,22 @@ export async function createFollowUpTask(
         associations: [
           {
             to: { id: contact.id },
-            types: [{ associationCategory: AssociationSpecAssociationCategoryEnum.HubspotDefined, associationTypeId: 204 }],
+            types: [
+              {
+                associationCategory:
+                  AssociationSpecAssociationCategoryEnum.HubspotDefined,
+                associationTypeId: 204,
+              },
+            ],
           },
         ],
       }),
     );
 
-    logger.info({ leadId: lead.id, taskId: task.id }, 'HubSpot follow-up task created');
+    logger.info(
+      { leadId: lead.id, taskId: task.id },
+      'HubSpot follow-up task created',
+    );
     return task.id;
   } catch (err) {
     logger.error({ err, leadId: lead.id }, 'Failed to create HubSpot task');
@@ -541,9 +771,16 @@ export async function getHubSpotStats(): Promise<HubSpotStats> {
     // Get total contacts with our custom property
     const contactSearch = await rateLimited(() =>
       client.crm.contacts.searchApi.doSearch({
-        filterGroups: [{
-          filters: [{ propertyName: 'monitor_id', operator: FilterOperatorEnum.HasProperty }],
-        }],
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: 'monitor_id',
+                operator: FilterOperatorEnum.HasProperty,
+              },
+            ],
+          },
+        ],
         properties: ['monitor_id'],
         limit: 1,
         after: '0',
@@ -554,9 +791,16 @@ export async function getHubSpotStats(): Promise<HubSpotStats> {
     // Get deals with stages
     const dealSearch = await rateLimited(() =>
       client.crm.deals.searchApi.doSearch({
-        filterGroups: [{
-          filters: [{ propertyName: 'original_post_url', operator: FilterOperatorEnum.HasProperty }],
-        }],
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: 'original_post_url',
+                operator: FilterOperatorEnum.HasProperty,
+              },
+            ],
+          },
+        ],
         properties: ['dealstage', 'amount'],
         limit: 100,
         after: '0',
@@ -583,7 +827,12 @@ export async function getHubSpotStats(): Promise<HubSpotStats> {
     };
   } catch (err) {
     logger.error({ err }, 'Failed to get HubSpot stats');
-    return { totalContacts: 0, totalDeals: 0, dealsByStage: {}, totalRevenue: 0 };
+    return {
+      totalContacts: 0,
+      totalDeals: 0,
+      dealsByStage: {},
+      totalRevenue: 0,
+    };
   }
 }
 
@@ -591,7 +840,9 @@ export async function getHubSpotStats(): Promise<HubSpotStats> {
 // Pipeline Stages (for debugging)
 // ---------------------------------------------------------------------------
 
-export async function getPipelineStages(): Promise<Array<{ id: string; label: string }>> {
+export async function getPipelineStages(): Promise<
+  Array<{ id: string; label: string }>
+> {
   const client = initHubSpot();
 
   try {
@@ -602,7 +853,10 @@ export async function getPipelineStages(): Promise<Array<{ id: string; label: st
     const stages: Array<{ id: string; label: string }> = [];
     for (const pipeline of pipelines.results) {
       for (const stage of pipeline.stages) {
-        stages.push({ id: stage.id, label: `${pipeline.label} > ${stage.label}` });
+        stages.push({
+          id: stage.id,
+          label: `${pipeline.label} > ${stage.label}`,
+        });
       }
     }
     return stages;
@@ -633,7 +887,9 @@ async function main(): Promise<void> {
 
     case 'setup-properties': {
       const result = await setupCustomProperties();
-      console.log(`Custom properties setup: ${result.created} created, ${result.skipped} already existed`);
+      console.log(
+        `Custom properties setup: ${result.created} created, ${result.skipped} already existed`,
+      );
       break;
     }
 
@@ -644,7 +900,9 @@ async function main(): Promise<void> {
 
       // Get leads that haven't been synced (no hubspotContactId)
       const allLeads = listLeads();
-      const unsynced = allLeads.filter(l => !l.hubspotContactId).slice(0, limit);
+      const unsynced = allLeads
+        .filter((l) => !l.hubspotContactId)
+        .slice(0, limit);
 
       if (unsynced.length === 0) {
         console.log('All leads are already synced to HubSpot.');
@@ -665,7 +923,9 @@ async function main(): Promise<void> {
         }
       }
 
-      console.log(`Sync complete: ${result.synced} synced, ${result.errors} errors`);
+      console.log(
+        `Sync complete: ${result.synced} synced, ${result.errors} errors`,
+      );
       break;
     }
 
@@ -690,7 +950,9 @@ async function main(): Promise<void> {
       }
       const contact = await lookupContact(query);
       if (contact) {
-        console.log(`Found contact: ID=${contact.id}, email=${contact.email || 'N/A'}, monitorId=${contact.monitorId || 'N/A'}`);
+        console.log(
+          `Found contact: ID=${contact.id}, email=${contact.email || 'N/A'}, monitorId=${contact.monitorId || 'N/A'}`,
+        );
       } else {
         console.log(`No contact found for: ${query}`);
       }
@@ -705,7 +967,7 @@ async function main(): Promise<void> {
       }
       const { listLeads, updateLead } = await import('./crm-helper.js');
       const leads = listLeads();
-      const lead = leads.find(l => l.id === leadId);
+      const lead = leads.find((l) => l.id === leadId);
       if (!lead) {
         console.log(`Lead not found: ${leadId}`);
         process.exit(1);
@@ -716,7 +978,9 @@ async function main(): Promise<void> {
           hubspotContactId: result.contactId,
           hubspotDealId: result.dealId,
         } as Partial<Lead>);
-        console.log(`Synced: contactId=${result.contactId}, dealId=${result.dealId}`);
+        console.log(
+          `Synced: contactId=${result.contactId}, dealId=${result.dealId}`,
+        );
       } else {
         console.log(`Error: ${result.error}`);
         process.exit(1);
@@ -728,17 +992,22 @@ async function main(): Promise<void> {
       const leadId = args[0];
       const subject = args[1];
       if (!leadId || !subject) {
-        console.log('Usage: hubspot.sh create-task <lead_id> <subject> [--due DAYS] [--priority HIGH|MEDIUM|LOW]');
+        console.log(
+          'Usage: hubspot.sh create-task <lead_id> <subject> [--due DAYS] [--priority HIGH|MEDIUM|LOW]',
+        );
         process.exit(1);
       }
       const dueIdx = args.indexOf('--due');
       const dueDays = dueIdx >= 0 ? parseInt(args[dueIdx + 1], 10) : 3;
       const prioIdx = args.indexOf('--priority');
-      const priority = prioIdx >= 0 ? args[prioIdx + 1] as 'HIGH' | 'MEDIUM' | 'LOW' : 'MEDIUM';
+      const priority =
+        prioIdx >= 0
+          ? (args[prioIdx + 1] as 'HIGH' | 'MEDIUM' | 'LOW')
+          : 'MEDIUM';
 
       const { listLeads } = await import('./crm-helper.js');
       const leads = listLeads();
-      const lead = leads.find(l => l.id === leadId);
+      const lead = leads.find((l) => l.id === leadId);
       if (!lead) {
         console.log(`Lead not found: ${leadId}`);
         process.exit(1);
@@ -771,20 +1040,27 @@ async function main(): Promise<void> {
       console.log('');
       console.log('Commands:');
       console.log('  validate                   Verify HubSpot token works');
-      console.log('  setup-properties           Create custom HubSpot properties');
-      console.log('  sync [--limit N]           Sync unsynced leads to HubSpot');
+      console.log(
+        '  setup-properties           Create custom HubSpot properties',
+      );
+      console.log(
+        '  sync [--limit N]           Sync unsynced leads to HubSpot',
+      );
       console.log('  status                     Show HubSpot sync stats');
       console.log('  lookup <email|monitor_id>  Find contact in HubSpot');
       console.log('  push-lead <lead_id>        Force-sync a specific lead');
-      console.log('  create-task <lead_id> <subject> [--due DAYS] [--priority HIGH|MEDIUM|LOW]');
+      console.log(
+        '  create-task <lead_id> <subject> [--due DAYS] [--priority HIGH|MEDIUM|LOW]',
+      );
       console.log('  stages                     List deal pipeline stages');
       process.exit(command ? 1 : 0);
   }
 }
 
 // Run CLI if executed directly
-const isMain = process.argv[1]?.endsWith('hubspot-sync.js')
-  || process.argv[1]?.endsWith('hubspot-sync.ts');
+const isMain =
+  process.argv[1]?.endsWith('hubspot-sync.js') ||
+  process.argv[1]?.endsWith('hubspot-sync.ts');
 if (isMain) {
   main().catch((err) => {
     console.error('Error:', err.message || err);

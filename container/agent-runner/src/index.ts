@@ -474,6 +474,7 @@ async function runQuery(
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
+        'mcp__gmail__*',
         'mcp__parallel-search__*',
         'mcp__parallel-task__*'
       ],
@@ -490,6 +491,10 @@ async function runQuery(
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
+        },
+        gmail: {
+          command: 'npx',
+          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
         },
         ...(process.env.PARALLEL_API_KEY ? {
           'parallel-search': {

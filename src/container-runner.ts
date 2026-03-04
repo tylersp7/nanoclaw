@@ -18,13 +18,17 @@ import {
   TIMEZONE,
 } from './config.js';
 import { getContainerPool, syncSkillsIfNeeded } from './container-pool.js';
-import { CONTAINER_RUNTIME_BIN, readonlyMountArgs, stopContainer } from './container-runtime.js';
+import {
+  CONTAINER_RUNTIME_BIN,
+  readonlyMountArgs,
+  stopContainer,
+} from './container-runtime.js';
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { getRelaySecret, getRelayUrl } from './ssh-relay.js';
-import { RegisteredGroup } from './types.js';
+import { MessageDestination, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -195,7 +199,13 @@ function buildVolumeMounts(
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
       const envContent = fs.readFileSync(envFile, 'utf-8');
-      const mainOnlyVars = ['PARALLEL_API_KEY', 'N8N_API_KEY', 'RENTCAST_API_KEY', 'HUBSPOT_TOKEN'];
+      const mainOnlyVars = [
+        'PARALLEL_API_KEY',
+        'N8N_API_KEY',
+        'RENTCAST_API_KEY',
+        'HUBSPOT_TOKEN',
+        'OPENAI_API_KEY',
+      ];
       for (const line of envContent.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) continue;
@@ -228,7 +238,12 @@ function buildVolumeMounts(
 
   // Copy agent-runner source into a per-group writable location so agents
   // can customize it. Recompiled on container startup via entrypoint.sh.
-  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
+  const agentRunnerSrc = path.join(
+    projectRoot,
+    'container',
+    'agent-runner',
+    'src',
+  );
   const groupAgentRunnerDir = path.join(
     DATA_DIR,
     'sessions',
@@ -244,6 +259,27 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Mount Gmail OAuth credentials so the Gmail MCP server can authenticate
+  // Read-write because the MCP server may need to refresh OAuth tokens
+  const gmailDir = path.join(os.homedir(), '.gmail-mcp');
+  if (fs.existsSync(gmailDir)) {
+    mounts.push({
+      hostPath: gmailDir,
+      containerPath: '/home/node/.gmail-mcp',
+      readonly: false,
+    });
+  }
+
+  // Mount Google Calendar credentials (read-write for token refresh)
+  const calendarDir = path.join(os.homedir(), '.nanoclaw-calendar');
+  if (fs.existsSync(calendarDir)) {
+    mounts.push({
+      hostPath: calendarDir,
+      containerPath: '/home/node/.nanoclaw-calendar',
+      readonly: false,
+    });
+  }
+
   // Mount SSH keys and VPS/service configs for main group (needed for VPS monitoring)
   if (isMain) {
     const homeDir = os.homedir();
@@ -256,7 +292,18 @@ function buildVolumeMounts(
       });
     }
     // Mount all nanoclaw service configs
-    const configDirs = ['vps', 'proposals', 'github', 'slack', 'calendar', 'n8n', 'job-boards', 'linkedin', 'property', 'hubspot'];
+    const configDirs = [
+      'vps',
+      'proposals',
+      'github',
+      'slack',
+      'n8n',
+      'job-boards',
+      'linkedin',
+      'property',
+      'hubspot',
+      'content',
+    ];
     for (const dir of configDirs) {
       const configPath = path.join(homeDir, `.nanoclaw-${dir}`);
       if (fs.existsSync(configPath)) {
@@ -294,10 +341,16 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
 ): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName,
+  const args: string[] = [
+    'run',
+    '-i',
+    '--rm',
+    '--name',
+    containerName,
     // Use public DNS — the bridge gateway forwards to the host's router DNS,
     // which can't resolve some domains (e.g. n8n.sparksbusinesssolutionsllc.com).
-    '--dns', '8.8.8.8',
+    '--dns',
+    '8.8.8.8',
   ];
 
   // Pass host timezone so container's local time matches the user's
@@ -479,15 +532,19 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
-      exec(`${CONTAINER_RUNTIME_BIN} stop ${containerName}`, { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn(
-            { group: group.name, containerName, err },
-            'Graceful stop failed, force killing',
-          );
-          container.kill('SIGKILL');
-        }
-      });
+      exec(
+        `${CONTAINER_RUNTIME_BIN} stop ${containerName}`,
+        { timeout: 15000 },
+        (err) => {
+          if (err) {
+            logger.warn(
+              { group: group.name, containerName, err },
+              'Graceful stop failed, force killing',
+            );
+            container.kill('SIGKILL');
+          }
+        },
+      );
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -769,5 +826,50 @@ export function writeGroupsSnapshot(
       null,
       2,
     ),
+  );
+}
+
+/**
+ * Write destinations snapshot for the container to read.
+ * Main group sees all destinations from all registered groups.
+ * Non-main groups only see their own configured destinations.
+ */
+export function writeDestinationsSnapshot(
+  groupFolder: string,
+  isMain: boolean,
+  registeredGroups: Record<string, RegisteredGroup>,
+): void {
+  const groupIpcDir = resolveGroupIpcPath(groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  let destinations: MessageDestination[] = [];
+
+  if (isMain) {
+    // Main group gets all destinations from all registered groups
+    for (const group of Object.values(registeredGroups)) {
+      if (group.destinations) {
+        destinations.push(...group.destinations);
+      }
+    }
+  } else {
+    // Non-main groups only see their own destinations
+    for (const group of Object.values(registeredGroups)) {
+      if (group.folder === groupFolder && group.destinations) {
+        destinations.push(...group.destinations);
+        break;
+      }
+    }
+  }
+
+  // Deduplicate by name (last wins)
+  const byName = new Map<string, MessageDestination>();
+  for (const d of destinations) {
+    byName.set(d.name, d);
+  }
+
+  const destFile = path.join(groupIpcDir, 'destinations.json');
+  fs.writeFileSync(
+    destFile,
+    JSON.stringify(Array.from(byName.values()), null, 2),
   );
 }

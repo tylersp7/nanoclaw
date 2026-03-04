@@ -32,7 +32,11 @@ interface UpworkFeed {
 }
 
 function loadUpworkFeeds(): UpworkFeed[] {
-  const feedFile = path.join(os.homedir(), '.nanoclaw-job-boards', 'upwork-feeds.json');
+  const feedFile = path.join(
+    os.homedir(),
+    '.nanoclaw-job-boards',
+    'upwork-feeds.json',
+  );
 
   if (!fs.existsSync(feedFile)) return [];
 
@@ -45,7 +49,9 @@ function loadUpworkFeeds(): UpworkFeed[] {
  * Upwork blocks direct scraping — use Andy's agent-browser for live results.
  * This function tries RSS first (legacy), then returns empty with instructions.
  */
-export async function fetchUpworkJobs(searchQuery?: string): Promise<JobListing[]> {
+export async function fetchUpworkJobs(
+  searchQuery?: string,
+): Promise<JobListing[]> {
   const feeds = loadUpworkFeeds();
   const allJobs: JobListing[] = [];
 
@@ -64,7 +70,9 @@ export async function fetchUpworkJobs(searchQuery?: string): Promise<JobListing[
           title: item.title || '',
           description: item.contentSnippet || '',
           budget,
-          budgetAmount: budget ? parseInt(budget.replace(/[$,]/g, '')) : undefined,
+          budgetAmount: budget
+            ? parseInt(budget.replace(/[$,]/g, ''))
+            : undefined,
           platform: 'upwork',
           url: item.link || '',
           postedAt: item.pubDate || new Date().toISOString(),
@@ -79,7 +87,9 @@ export async function fetchUpworkJobs(searchQuery?: string): Promise<JobListing[
   if (allJobs.length === 0) {
     const query = searchQuery || 'n8n automation';
     console.log(`Upwork blocks direct scraping. Use agent-browser to search:`);
-    console.log(`  agent-browser open "https://www.upwork.com/nx/search/jobs/?q=${encodeURIComponent(query)}&sort=recency"`);
+    console.log(
+      `  agent-browser open "https://www.upwork.com/nx/search/jobs/?q=${encodeURIComponent(query)}&sort=recency"`,
+    );
     console.log(`  agent-browser snapshot -i`);
   }
 
@@ -93,7 +103,7 @@ export async function fetchIndeedJobs(keywords: string): Promise<JobListing[]> {
   try {
     const query = encodeURIComponent(keywords);
     const rssFeed = await parser.parseURL(
-      `https://www.indeed.com/rss?q=${query}&l=remote&sort=date`
+      `https://www.indeed.com/rss?q=${query}&l=remote&sort=date`,
     );
 
     return rssFeed.items.map((item) => ({
@@ -113,22 +123,28 @@ export async function fetchIndeedJobs(keywords: string): Promise<JobListing[]> {
 /**
  * Fetch Freelancer jobs via their public API
  */
-export async function fetchFreelancerJobs(keywords: string): Promise<JobListing[]> {
+export async function fetchFreelancerJobs(
+  keywords: string,
+): Promise<JobListing[]> {
   try {
-    const response = await axios.get('https://www.freelancer.com/api/projects/0.1/projects/active/', {
-      params: {
-        query: keywords,
-        compact: true,
-        limit: 50,
-        job_details: true,
-        sort_field: 'time_submitted',
-        sort_direction: 'desc',
+    const response = await axios.get(
+      'https://www.freelancer.com/api/projects/0.1/projects/active/',
+      {
+        params: {
+          query: keywords,
+          compact: true,
+          limit: 50,
+          job_details: true,
+          sort_field: 'time_submitted',
+          sort_direction: 'desc',
+        },
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        },
+        timeout: 15000,
       },
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-      },
-      timeout: 15000,
-    });
+    );
 
     const projects = response.data?.result?.projects || [];
 
@@ -136,11 +152,15 @@ export async function fetchFreelancerJobs(keywords: string): Promise<JobListing[
       id: String(p.id),
       title: p.title || '',
       description: p.preview_description || p.description || '',
-      budget: p.budget?.maximum ? `$${p.budget.minimum}-$${p.budget.maximum}` : undefined,
+      budget: p.budget?.maximum
+        ? `$${p.budget.minimum}-$${p.budget.maximum}`
+        : undefined,
       budgetAmount: p.budget?.maximum ? p.budget.maximum : undefined,
       platform: 'freelancer' as const,
       url: `https://www.freelancer.com/projects/${p.seo_url || p.id}`,
-      postedAt: p.time_submitted ? new Date(p.time_submitted * 1000).toISOString() : new Date().toISOString(),
+      postedAt: p.time_submitted
+        ? new Date(p.time_submitted * 1000).toISOString()
+        : new Date().toISOString(),
       skills: (p.jobs || []).map((j: any) => j.name || j),
     }));
   } catch (error: any) {
@@ -166,7 +186,10 @@ export function scoreJob(job: JobListing, userSkills: string[]): number {
 
   const skillMatches = userSkills.filter((skill) => {
     const skillLower = skill.toLowerCase();
-    return text.includes(skillLower) || job.skills.some((s) => s.toLowerCase().includes(skillLower));
+    return (
+      text.includes(skillLower) ||
+      job.skills.some((s) => s.toLowerCase().includes(skillLower))
+    );
   }).length;
 
   score += Math.min(skillMatches, 3);
@@ -176,7 +199,8 @@ export function scoreJob(job: JobListing, userSkills: string[]): number {
   if (text.includes('vps') || text.includes('server')) score += 1;
   if (text.includes('ongoing') || text.includes('long term')) score += 2;
 
-  if (text.includes('urgent') && job.budgetAmount && job.budgetAmount < 100) score -= 2;
+  if (text.includes('urgent') && job.budgetAmount && job.budgetAmount < 100)
+    score -= 2;
   if (text.includes('simple') || text.includes('quick task')) score -= 1;
   if (text.includes('copy') || text.includes('data entry')) score -= 3;
 
@@ -189,7 +213,7 @@ export function scoreJob(job: JobListing, userSkills: string[]): number {
 export function filterJobsByScore(
   jobs: JobListing[],
   userSkills: string[],
-  minScore: number = 7
+  minScore: number = 7,
 ): Array<JobListing & { relevanceScore: number }> {
   return jobs
     .map((job) => ({
@@ -204,14 +228,16 @@ export function filterJobsByScore(
  * Format jobs for WhatsApp
  */
 export function formatJobsForWhatsApp(
-  jobs: Array<JobListing & { relevanceScore?: number }>
+  jobs: Array<JobListing & { relevanceScore?: number }>,
 ): string {
   if (jobs.length === 0) return 'No jobs found.';
 
   return jobs
     .slice(0, 15)
     .map((job, i) => {
-      const scoreStr = job.relevanceScore ? ` [Score: ${job.relevanceScore}/10]` : '';
+      const scoreStr = job.relevanceScore
+        ? ` [Score: ${job.relevanceScore}/10]`
+        : '';
       const budget = job.budget ? ` 💰 ${job.budget}` : '';
       const platformLabel = {
         upwork: 'Upwork',

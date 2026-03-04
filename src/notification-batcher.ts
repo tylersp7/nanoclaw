@@ -1,9 +1,9 @@
 import { logger } from './logger.js';
 
 export interface BatcherConfig {
-  windowMs: number;      // How long to wait before flushing (default: 30000 = 30s)
-  maxMessages: number;   // Max messages to batch before force-flush (default: 5)
-  separator: string;     // How to join batched messages (default: '\n\n---\n\n')
+  windowMs: number; // How long to wait before flushing (default: 30000 = 30s)
+  maxMessages: number; // Max messages to batch before force-flush (default: 5)
+  separator: string; // How to join batched messages (default: '\n\n---\n\n')
 }
 
 const DEFAULT_CONFIG: BatcherConfig = {

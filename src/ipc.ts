@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import crypto from 'crypto';
+
 import { CronExpressionParser } from 'cron-parser';
 
 import {
@@ -10,10 +12,19 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getRouterState,
+  getTaskById,
+  setRegisteredGroup,
+  setRouterState,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { MessageDestination, RegisteredGroup } from './types.js';
+import { handleXIpc } from './x-integration.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -75,13 +86,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
+                // Check if the target JID is in this group's destinations
+                const sourceGroupEntry = Object.values(registeredGroups).find(
+                  (g) => g.folder === sourceGroup,
+                );
+                const isDestination = sourceGroupEntry?.destinations?.some(
+                  (d: MessageDestination) => d.targetJid === data.chatJid,
+                );
                 if (
                   isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
+                  (targetGroup && targetGroup.folder === sourceGroup) ||
+                  isDestination
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
+                    { chatJid: data.chatJid, sourceGroup, viaDestination: !!isDestination },
                     'IPC message sent',
                   );
                 } else {
@@ -177,6 +196,10 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For enable_webhook / X integration
+    requestId?: string;
+    // For set_destinations
+    destinations?: Array<{ name: string; targetJid: string; description?: string }>;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -391,7 +414,99 @@ export async function processTaskIpc(
       }
       break;
 
-    default:
-      logger.warn({ type: data.type }, 'Unknown IPC task type');
+    case 'set_destinations': {
+      // Only main group can set destinations
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized set_destinations attempt blocked',
+        );
+        break;
+      }
+      if (!data.targetJid || !data.destinations) {
+        logger.warn({ data }, 'Invalid set_destinations: missing fields');
+        break;
+      }
+
+      const destTargetGroup = registeredGroups[data.targetJid];
+      if (!destTargetGroup) {
+        logger.warn(
+          { targetJid: data.targetJid },
+          'set_destinations: target group not registered',
+        );
+        // Write error result if requestId present
+        if (data.requestId) {
+          const resultDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'dest_results');
+          fs.mkdirSync(resultDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(resultDir, `${data.requestId}.json`),
+            JSON.stringify({ error: `Group ${data.targetJid} not registered` }),
+          );
+        }
+        break;
+      }
+
+      // Update the group's destinations
+      const updatedGroup = { ...destTargetGroup, destinations: data.destinations };
+      deps.registerGroup(data.targetJid, updatedGroup);
+      logger.info(
+        { targetJid: data.targetJid, count: data.destinations.length },
+        'Destinations updated via IPC',
+      );
+
+      // Write success result
+      if (data.requestId) {
+        const resultDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'dest_results');
+        fs.mkdirSync(resultDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(resultDir, `${data.requestId}.json`),
+          JSON.stringify({ success: true, groupName: destTargetGroup.name }),
+        );
+      }
+      break;
+    }
+
+    case 'enable_webhook': {
+      // Generate or retrieve a webhook secret for a group
+      // Main can enable for any group; others only for themselves
+      const targetFolder = isMain && data.folder ? data.folder : sourceGroup;
+      if (!isMain && targetFolder !== sourceGroup) {
+        logger.warn(
+          { sourceGroup, targetFolder },
+          'Unauthorized enable_webhook attempt blocked',
+        );
+        break;
+      }
+      const stateKey = `webhook_secret_${targetFolder}`;
+      let secret = getRouterState(stateKey);
+      if (!secret) {
+        secret = crypto.randomBytes(32).toString('hex');
+        setRouterState(stateKey, secret);
+        logger.info({ targetFolder }, 'Webhook secret generated');
+      }
+      // Write the secret to the IPC results directory so the agent can read it
+      const webhookResultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'webhook_results',
+      );
+      fs.mkdirSync(webhookResultDir, { recursive: true });
+      const resultFile = data.requestId
+        ? `${data.requestId}.json`
+        : `webhook-${Date.now()}.json`;
+      fs.writeFileSync(
+        path.join(webhookResultDir, resultFile),
+        JSON.stringify({ secret, groupFolder: targetFolder }),
+      );
+      break;
+    }
+
+    default: {
+      const handled = await handleXIpc(data, sourceGroup, isMain);
+      if (!handled) {
+        logger.warn({ type: data.type }, 'Unknown IPC task type');
+      }
+    }
   }
 }

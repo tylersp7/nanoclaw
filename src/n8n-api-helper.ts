@@ -51,7 +51,11 @@ function loadConfig(): N8nConfig {
     // When using SSH_RELAY, connect to n8n via Tailscale IP instead of public domain
     // The relay can reach Tailscale IPs from the host network
     if (process.env.SSH_RELAY_URL && process.env.SSH_RELAY_SECRET) {
-      const vpsConfigPath = path.join(os.homedir(), '.nanoclaw-vps', 'config.json');
+      const vpsConfigPath = path.join(
+        os.homedir(),
+        '.nanoclaw-vps',
+        'config.json',
+      );
       if (fs.existsSync(vpsConfigPath)) {
         const vpsConfig = JSON.parse(fs.readFileSync(vpsConfigPath, 'utf-8'));
         const beastmode = vpsConfig.servers?.beastmode;
@@ -63,7 +67,11 @@ function loadConfig(): N8nConfig {
     }
 
     // Fallback to VPS config URL or default
-    const vpsConfigPath = path.join(os.homedir(), '.nanoclaw-vps', 'config.json');
+    const vpsConfigPath = path.join(
+      os.homedir(),
+      '.nanoclaw-vps',
+      'config.json',
+    );
     if (fs.existsSync(vpsConfigPath)) {
       const vpsConfig = JSON.parse(fs.readFileSync(vpsConfigPath, 'utf-8'));
       const beastmode = vpsConfig.servers?.beastmode;
@@ -80,7 +88,9 @@ function loadConfig(): N8nConfig {
     return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   }
 
-  throw new Error('n8n API key not found. Set N8N_API_KEY env var or create ~/.nanoclaw-n8n/config.json');
+  throw new Error(
+    'n8n API key not found. Set N8N_API_KEY env var or create ~/.nanoclaw-n8n/config.json',
+  );
 }
 
 /**
@@ -108,21 +118,25 @@ function fetchViaRelay(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${relaySecret}`,
+          Authorization: `Bearer ${relaySecret}`,
           'Content-Length': Buffer.byteLength(payload),
         },
         timeout: 20000,
       },
       (res) => {
         let data = '';
-        res.on('data', (chunk) => { data += chunk; });
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
         res.on('end', () => {
           try {
             const parsed = JSON.parse(data);
             if (res.statusCode === 200) {
               resolve({ status: parsed.status, body: parsed.body });
             } else {
-              reject(new Error(parsed.error || `Relay returned ${res.statusCode}`));
+              reject(
+                new Error(parsed.error || `Relay returned ${res.statusCode}`),
+              );
             }
           } catch {
             reject(new Error(`Relay returned invalid response`));
@@ -130,8 +144,13 @@ function fetchViaRelay(
         });
       },
     );
-    req.on('error', (err) => reject(new Error(`Relay connection failed: ${err.message}`)));
-    req.on('timeout', () => { req.destroy(); reject(new Error('Relay request timed out')); });
+    req.on('error', (err) =>
+      reject(new Error(`Relay connection failed: ${err.message}`)),
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Relay request timed out'));
+    });
     req.write(payload);
     req.end();
   });
@@ -195,7 +214,9 @@ function getClient(): AxiosInstance {
 /**
  * List all workflows
  */
-export async function listWorkflows(activeOnly: boolean = false): Promise<N8nWorkflow[]> {
+export async function listWorkflows(
+  activeOnly: boolean = false,
+): Promise<N8nWorkflow[]> {
   const client = getClient();
   const { data } = await client.get('/workflows', {
     params: activeOnly ? { active: true } : {},
@@ -215,7 +236,10 @@ export async function getWorkflow(id: string): Promise<N8nWorkflow> {
 /**
  * Activate/deactivate a workflow
  */
-export async function setWorkflowActive(id: string, active: boolean): Promise<void> {
+export async function setWorkflowActive(
+  id: string,
+  active: boolean,
+): Promise<void> {
   const client = getClient();
   await client.patch(`/workflows/${id}`, { active });
 }
@@ -252,7 +276,11 @@ export async function getExecution(id: string): Promise<N8nExecutionDetail> {
 /**
  * Get failed executions with error details
  */
-export async function getFailedExecutions(limit: number = 10): Promise<Array<N8nExecution & { errorMessage?: string; errorNode?: string }>> {
+export async function getFailedExecutions(
+  limit: number = 10,
+): Promise<
+  Array<N8nExecution & { errorMessage?: string; errorNode?: string }>
+> {
   const executions = await listExecutions({ status: 'error', limit });
 
   const detailed = await Promise.all(
@@ -265,9 +293,13 @@ export async function getFailedExecutions(limit: number = 10): Promise<Array<N8n
           errorNode: detail.data?.resultData?.error?.node?.name,
         };
       } catch {
-        return { ...exec, errorMessage: 'Could not fetch details', errorNode: undefined };
+        return {
+          ...exec,
+          errorMessage: 'Could not fetch details',
+          errorNode: undefined,
+        };
       }
-    })
+    }),
   );
 
   return detailed;
@@ -308,11 +340,16 @@ export async function getExecutionStats(hours: number = 24): Promise<{
 
   const cutoff = Date.now() - hours * 60 * 60 * 1000;
 
-  const recentSuccess = successExecs.filter(e => new Date(e.startedAt).getTime() > cutoff);
-  const recentFailed = failedExecs.filter(e => new Date(e.startedAt).getTime() > cutoff);
+  const recentSuccess = successExecs.filter(
+    (e) => new Date(e.startedAt).getTime() > cutoff,
+  );
+  const recentFailed = failedExecs.filter(
+    (e) => new Date(e.startedAt).getTime() > cutoff,
+  );
 
   // Group errors by workflow
-  const errorsByWorkflow: Record<string, { count: number; lastError: string }> = {};
+  const errorsByWorkflow: Record<string, { count: number; lastError: string }> =
+    {};
   for (const exec of recentFailed) {
     const wfName = exec.workflowName || exec.workflowId;
     if (!errorsByWorkflow[wfName]) {
@@ -327,9 +364,8 @@ export async function getExecutionStats(hours: number = 24): Promise<{
     .slice(0, 5);
 
   const total = recentSuccess.length + recentFailed.length;
-  const successRate = total > 0
-    ? `${Math.round((recentSuccess.length / total) * 100)}%`
-    : 'N/A';
+  const successRate =
+    total > 0 ? `${Math.round((recentSuccess.length / total) * 100)}%` : 'N/A';
 
   return {
     total,
@@ -347,49 +383,63 @@ export async function getExecutionStats(hours: number = 24): Promise<{
 export function formatWorkflowsForWhatsApp(workflows: N8nWorkflow[]): string {
   if (workflows.length === 0) return 'No workflows found.';
 
-  return workflows.map((wf, i) => {
-    const status = wf.active ? '🟢 Active' : '⚪ Inactive';
-    const tags = wf.tags?.map(t => t.name).join(', ') || '';
+  return workflows
+    .map((wf, i) => {
+      const status = wf.active ? '🟢 Active' : '⚪ Inactive';
+      const tags = wf.tags?.map((t) => t.name).join(', ') || '';
 
-    return `${i + 1}. *${wf.name}* ${status}
+      return `${i + 1}. *${wf.name}* ${status}
 ID: ${wf.id}${tags ? ` • Tags: ${tags}` : ''}`;
-  }).join('\n');
+    })
+    .join('\n');
 }
 
 /**
  * Format executions for WhatsApp
  */
-export function formatExecutionsForWhatsApp(executions: Array<N8nExecution & { errorMessage?: string; errorNode?: string }>): string {
+export function formatExecutionsForWhatsApp(
+  executions: Array<
+    N8nExecution & { errorMessage?: string; errorNode?: string }
+  >,
+): string {
   if (executions.length === 0) return 'No executions found.';
 
-  return executions.map((exec, i) => {
-    const statusEmoji = {
-      success: '✅',
-      error: '❌',
-      waiting: '⏳',
-      running: '🔄',
-      crashed: '💥',
-    }[exec.status] || '❓';
+  return executions
+    .map((exec, i) => {
+      const statusEmoji =
+        {
+          success: '✅',
+          error: '❌',
+          waiting: '⏳',
+          running: '🔄',
+          crashed: '💥',
+        }[exec.status] || '❓';
 
-    const time = new Date(exec.startedAt).toLocaleString();
-    const error = exec.errorMessage ? `\nError: ${exec.errorMessage.substring(0, 150)}` : '';
-    const node = exec.errorNode ? ` (node: ${exec.errorNode})` : '';
+      const time = new Date(exec.startedAt).toLocaleString();
+      const error = exec.errorMessage
+        ? `\nError: ${exec.errorMessage.substring(0, 150)}`
+        : '';
+      const node = exec.errorNode ? ` (node: ${exec.errorNode})` : '';
 
-    return `${i + 1}. ${statusEmoji} ${exec.workflowName || exec.workflowId}
+      return `${i + 1}. ${statusEmoji} ${exec.workflowName || exec.workflowId}
 ${time} • ${exec.mode}${node}${error}`;
-  }).join('\n\n');
+    })
+    .join('\n\n');
 }
 
 /**
  * Format stats for WhatsApp
  */
-export function formatStatsForWhatsApp(stats: {
-  total: number;
-  success: number;
-  failed: number;
-  successRate: string;
-  topErrors: Array<{ workflow: string; count: number }>;
-}, hours: number): string {
+export function formatStatsForWhatsApp(
+  stats: {
+    total: number;
+    success: number;
+    failed: number;
+    successRate: string;
+    topErrors: Array<{ workflow: string; count: number }>;
+  },
+  hours: number,
+): string {
   let output = `*n8n Execution Stats (last ${hours}h)*
 
 Total: ${stats.total}
@@ -399,9 +449,9 @@ Total: ${stats.total}
 
   if (stats.topErrors.length > 0) {
     output += '\n\n*Top Errors:*\n';
-    output += stats.topErrors.map(e =>
-      `• ${e.workflow}: ${e.count} failures`
-    ).join('\n');
+    output += stats.topErrors
+      .map((e) => `• ${e.workflow}: ${e.count} failures`)
+      .join('\n');
   }
 
   return output;

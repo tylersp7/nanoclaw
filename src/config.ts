@@ -6,7 +6,14 @@ import { readEnvFile } from './env.js';
 // Read config values from .env (falls back to process.env).
 // Secrets are NOT read here — they stay on disk and are loaded only
 // where needed (container-runner.ts) to avoid leaking to child processes.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER', 'SHEETS_SPREADSHEET_ID']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+  'SHEETS_SPREADSHEET_ID',
+  'TELEGRAM_BOT_TOKEN',
+  'TELEGRAM_ONLY',
+  'SLACK_ONLY',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -78,8 +85,14 @@ export const NOTIFICATION_BATCH_MAX = parseInt(
 );
 
 // Quiet hours: hold non-critical notifications during this window
-export const QUIET_HOURS_START = parseInt(process.env.QUIET_HOURS_START || '8', 10);
-export const QUIET_HOURS_END = parseInt(process.env.QUIET_HOURS_END || '14', 10);
+export const QUIET_HOURS_START = parseInt(
+  process.env.QUIET_HOURS_START || '8',
+  10,
+);
+export const QUIET_HOURS_END = parseInt(
+  process.env.QUIET_HOURS_END || '14',
+  10,
+);
 
 // Patterns indicating "nothing to report" — suppress these notifications
 export const NOTHING_TO_REPORT_PATTERNS = [
@@ -101,3 +114,11 @@ export const SHEETS_SPREADSHEET_ID =
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Telegram channel
+export const TELEGRAM_BOT_TOKEN =
+  process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
+export const TELEGRAM_ONLY =
+  (process.env.TELEGRAM_ONLY || envConfig.TELEGRAM_ONLY) === 'true';
+export const SLACK_ONLY =
+  (process.env.SLACK_ONLY || envConfig.SLACK_ONLY) === 'true';

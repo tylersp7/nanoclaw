@@ -6,8 +6,18 @@ import os from 'os';
 interface BloggerStatus {
   server: string;
   services: Array<{ name: string; status: string; healthy: boolean }>;
-  queue: { pending: number; processing: number; failed: number; completed: number };
-  recentPosts: Array<{ title: string; status: string; createdAt: string; site?: string }>;
+  queue: {
+    pending: number;
+    processing: number;
+    failed: number;
+    completed: number;
+  };
+  recentPosts: Array<{
+    title: string;
+    status: string;
+    createdAt: string;
+    site?: string;
+  }>;
   database: { connected: boolean; size: string };
   redis: { connected: boolean; memoryUsed: string };
   errors: string[];
@@ -22,15 +32,18 @@ export async function getBloggerStatus(): Promise<BloggerStatus> {
   // Check Docker containers
   let dockerOutput: string;
   try {
-    dockerOutput = await runCommand(server, 'docker ps -a --format "{{.Names}}|{{.Status}}|{{.Image}}" 2>/dev/null');
+    dockerOutput = await runCommand(
+      server,
+      'docker ps -a --format "{{.Names}}|{{.Status}}|{{.Image}}" 2>/dev/null',
+    );
   } catch {
     dockerOutput = '';
   }
 
   const services = dockerOutput
     .split('\n')
-    .filter(l => l.trim())
-    .map(line => {
+    .filter((l) => l.trim())
+    .map((line) => {
       const [name, status, image] = line.split('|');
       return {
         name: name || 'unknown',
@@ -42,15 +55,18 @@ export async function getBloggerStatus(): Promise<BloggerStatus> {
   // Check queue status (BullMQ via Redis)
   let queueInfo = { pending: 0, processing: 0, failed: 0, completed: 0 };
   try {
-    const redisOutput = await runCommand(server,
-      'redis-cli -n 0 <<\'REDIS\'\n' +
-      'LLEN bull:blog-generation:wait\n' +
-      'LLEN bull:blog-generation:active\n' +
-      'ZCARD bull:blog-generation:failed\n' +
-      'ZCARD bull:blog-generation:completed\n' +
-      'REDIS'
+    const redisOutput = await runCommand(
+      server,
+      "redis-cli -n 0 <<'REDIS'\n" +
+        'LLEN bull:blog-generation:wait\n' +
+        'LLEN bull:blog-generation:active\n' +
+        'ZCARD bull:blog-generation:failed\n' +
+        'ZCARD bull:blog-generation:completed\n' +
+        'REDIS',
     );
-    const counts = redisOutput.split('\n').map((l: string) => parseInt(l.trim()) || 0);
+    const counts = redisOutput
+      .split('\n')
+      .map((l: string) => parseInt(l.trim()) || 0);
     queueInfo = {
       pending: counts[0] || 0,
       processing: counts[1] || 0,
@@ -62,13 +78,19 @@ export async function getBloggerStatus(): Promise<BloggerStatus> {
   }
 
   // Check recent posts from database
-  let recentPosts: Array<{ title: string; status: string; createdAt: string; site?: string }> = [];
+  let recentPosts: Array<{
+    title: string;
+    status: string;
+    createdAt: string;
+    site?: string;
+  }> = [];
   try {
-    const dbOutput = await runCommand(server,
+    const dbOutput = await runCommand(
+      server,
       'docker exec -i $(docker ps -q --filter "name=postgres") psql -U postgres -d auto_blogger -t -c ' +
-      '"SELECT title, status, created_at, site_name FROM posts ORDER BY created_at DESC LIMIT 5;" 2>/dev/null ' +
-      '|| sudo -u postgres psql -d auto_blogger -t -c ' +
-      '"SELECT title, status, created_at, site_name FROM posts ORDER BY created_at DESC LIMIT 5;" 2>/dev/null'
+        '"SELECT title, status, created_at, site_name FROM posts ORDER BY created_at DESC LIMIT 5;" 2>/dev/null ' +
+        '|| sudo -u postgres psql -d auto_blogger -t -c ' +
+        '"SELECT title, status, created_at, site_name FROM posts ORDER BY created_at DESC LIMIT 5;" 2>/dev/null',
     );
     recentPosts = dbOutput
       .split('\n')
@@ -90,11 +112,12 @@ export async function getBloggerStatus(): Promise<BloggerStatus> {
   let dbConnected = false;
   let dbSize = 'unknown';
   try {
-    const dbCheck = await runCommand(server,
+    const dbCheck = await runCommand(
+      server,
       'docker exec -i $(docker ps -q --filter "name=postgres") psql -U postgres -d auto_blogger -t -c ' +
-      '"SELECT pg_size_pretty(pg_database_size(current_database()));" 2>/dev/null ' +
-      '|| sudo -u postgres psql -d auto_blogger -t -c ' +
-      '"SELECT pg_size_pretty(pg_database_size(current_database()));" 2>/dev/null'
+        '"SELECT pg_size_pretty(pg_database_size(current_database()));" 2>/dev/null ' +
+        '|| sudo -u postgres psql -d auto_blogger -t -c ' +
+        '"SELECT pg_size_pretty(pg_database_size(current_database()));" 2>/dev/null',
     );
     if (dbCheck.trim()) {
       dbConnected = true;
@@ -108,7 +131,10 @@ export async function getBloggerStatus(): Promise<BloggerStatus> {
   let redisConnected = false;
   let redisMemory = 'unknown';
   try {
-    const redisCheck = await runCommand(server, 'redis-cli info memory 2>/dev/null | grep used_memory_human');
+    const redisCheck = await runCommand(
+      server,
+      'redis-cli info memory 2>/dev/null | grep used_memory_human',
+    );
     if (redisCheck.includes('used_memory_human')) {
       redisConnected = true;
       redisMemory = redisCheck.split(':')[1]?.trim() || 'unknown';
@@ -120,8 +146,9 @@ export async function getBloggerStatus(): Promise<BloggerStatus> {
   // Get recent errors
   let errors: string[] = [];
   try {
-    const errorLogs = await runCommand(server,
-      'docker logs --tail 20 $(docker ps -q --filter "name=auto-blogger" --filter "name=blog" | head -1) 2>&1 | grep -i "error\\|fail\\|exception" | tail -5 2>/dev/null'
+    const errorLogs = await runCommand(
+      server,
+      'docker logs --tail 20 $(docker ps -q --filter "name=auto-blogger" --filter "name=blog" | head -1) 2>&1 | grep -i "error\\|fail\\|exception" | tail -5 2>/dev/null',
     );
     errors = errorLogs.split('\n').filter((l: string) => l.trim());
   } catch {
@@ -153,40 +180,54 @@ export async function getPostStats(days: number = 7): Promise<{
   const server = 'blogger';
 
   try {
-    const output = await runCommand(server,
+    const output = await runCommand(
+      server,
       `docker exec -i $(docker ps -q --filter "name=postgres") psql -U postgres -d auto_blogger -t -c "` +
-      `SELECT status, site_name, DATE(created_at) as day, COUNT(*) ` +
-      `FROM posts WHERE created_at > NOW() - INTERVAL '${days} days' ` +
-      `GROUP BY status, site_name, DATE(created_at) ORDER BY day DESC;" 2>/dev/null ` +
-      `|| sudo -u postgres psql -d auto_blogger -t -c "` +
-      `SELECT status, site_name, DATE(created_at) as day, COUNT(*) ` +
-      `FROM posts WHERE created_at > NOW() - INTERVAL '${days} days' ` +
-      `GROUP BY status, site_name, DATE(created_at) ORDER BY day DESC;" 2>/dev/null`
+        `SELECT status, site_name, DATE(created_at) as day, COUNT(*) ` +
+        `FROM posts WHERE created_at > NOW() - INTERVAL '${days} days' ` +
+        `GROUP BY status, site_name, DATE(created_at) ORDER BY day DESC;" 2>/dev/null ` +
+        `|| sudo -u postgres psql -d auto_blogger -t -c "` +
+        `SELECT status, site_name, DATE(created_at) as day, COUNT(*) ` +
+        `FROM posts WHERE created_at > NOW() - INTERVAL '${days} days' ` +
+        `GROUP BY status, site_name, DATE(created_at) ORDER BY day DESC;" 2>/dev/null`,
     );
 
-    let total = 0, published = 0, failed = 0, pending = 0;
+    let total = 0,
+      published = 0,
+      failed = 0,
+      pending = 0;
     const bySite: Record<string, number> = {};
     const byDay: Record<string, number> = {};
 
-    output.split('\n').filter((l: string) => l.trim() && l.includes('|')).forEach((line: string) => {
-      const parts = line.split('|').map((p: string) => p.trim());
-      const status = parts[0];
-      const site = parts[1] || 'unknown';
-      const day = parts[2] || 'unknown';
-      const count = parseInt(parts[3]) || 0;
+    output
+      .split('\n')
+      .filter((l: string) => l.trim() && l.includes('|'))
+      .forEach((line: string) => {
+        const parts = line.split('|').map((p: string) => p.trim());
+        const status = parts[0];
+        const site = parts[1] || 'unknown';
+        const day = parts[2] || 'unknown';
+        const count = parseInt(parts[3]) || 0;
 
-      total += count;
-      if (status === 'published') published += count;
-      else if (status === 'failed') failed += count;
-      else pending += count;
+        total += count;
+        if (status === 'published') published += count;
+        else if (status === 'failed') failed += count;
+        else pending += count;
 
-      bySite[site] = (bySite[site] || 0) + count;
-      byDay[day] = (byDay[day] || 0) + count;
-    });
+        bySite[site] = (bySite[site] || 0) + count;
+        byDay[day] = (byDay[day] || 0) + count;
+      });
 
     return { total, published, failed, pending, bySite, byDay };
   } catch {
-    return { total: 0, published: 0, failed: 0, pending: 0, bySite: {}, byDay: {} };
+    return {
+      total: 0,
+      published: 0,
+      failed: 0,
+      pending: 0,
+      bySite: {},
+      byDay: {},
+    };
   }
 }
 
@@ -198,10 +239,11 @@ export async function retryFailedPosts(): Promise<string> {
 
   try {
     // Move failed jobs back to waiting queue in Redis
-    const output = await runCommand(server,
-      'redis-cli -n 0 <<\'REDIS\'\n' +
-      'EVAL "local jobs = redis.call(\'zrange\', KEYS[1], 0, -1) for i, job in ipairs(jobs) do redis.call(\'rpush\', KEYS[2], job) redis.call(\'zrem\', KEYS[1], job) end return #jobs" 2 bull:blog-generation:failed bull:blog-generation:wait\n' +
-      'REDIS'
+    const output = await runCommand(
+      server,
+      "redis-cli -n 0 <<'REDIS'\n" +
+        "EVAL \"local jobs = redis.call('zrange', KEYS[1], 0, -1) for i, job in ipairs(jobs) do redis.call('rpush', KEYS[2], job) redis.call('zrem', KEYS[1], job) end return #jobs\" 2 bull:blog-generation:failed bull:blog-generation:wait\n" +
+        'REDIS',
     );
     return `Retried ${output.trim() || '0'} failed jobs`;
   } catch (err: any) {
@@ -218,10 +260,11 @@ export async function restartBloggerServices(): Promise<string> {
 
   try {
     // Try docker-compose first, then individual containers
-    const output = await runCommand(server,
+    const output = await runCommand(
+      server,
       'cd /opt/auto-blogger && docker-compose restart 2>/dev/null || ' +
-      'cd ~/auto-blogger && docker-compose restart 2>/dev/null || ' +
-      'docker restart $(docker ps -q --filter "name=blog" --filter "name=auto") 2>/dev/null'
+        'cd ~/auto-blogger && docker-compose restart 2>/dev/null || ' +
+        'docker restart $(docker ps -q --filter "name=blog" --filter "name=auto") 2>/dev/null',
     );
     results.push(output || 'Restart command executed');
   } catch (err: any) {
@@ -235,27 +278,40 @@ export async function restartBloggerServices(): Promise<string> {
  * Format blogger status for WhatsApp
  */
 export function formatBloggerStatusForWhatsApp(status: BloggerStatus): string {
-  const serviceLines = status.services.length > 0
-    ? status.services.map(s =>
-        `${s.healthy ? '✅' : '❌'} ${s.name} - ${s.status}`
-      ).join('\n')
-    : 'No containers found';
+  const serviceLines =
+    status.services.length > 0
+      ? status.services
+          .map((s) => `${s.healthy ? '✅' : '❌'} ${s.name} - ${s.status}`)
+          .join('\n')
+      : 'No containers found';
 
   const queueLine = `Pending: ${status.queue.pending} • Active: ${status.queue.processing} • Failed: ${status.queue.failed} • Done: ${status.queue.completed}`;
 
-  const postLines = status.recentPosts.length > 0
-    ? status.recentPosts.map(p => {
-        const statusEmoji = p.status === 'published' ? '✅' : p.status === 'failed' ? '❌' : '⏳';
-        return `${statusEmoji} ${p.title.substring(0, 50)}${p.title.length > 50 ? '...' : ''}${p.site ? ` (${p.site})` : ''}`;
-      }).join('\n')
-    : 'No recent posts';
+  const postLines =
+    status.recentPosts.length > 0
+      ? status.recentPosts
+          .map((p) => {
+            const statusEmoji =
+              p.status === 'published'
+                ? '✅'
+                : p.status === 'failed'
+                  ? '❌'
+                  : '⏳';
+            return `${statusEmoji} ${p.title.substring(0, 50)}${p.title.length > 50 ? '...' : ''}${p.site ? ` (${p.site})` : ''}`;
+          })
+          .join('\n')
+      : 'No recent posts';
 
   const dbLine = `${status.database.connected ? '✅' : '❌'} PostgreSQL (${status.database.size})`;
   const redisLine = `${status.redis.connected ? '✅' : '❌'} Redis (${status.redis.memoryUsed})`;
 
-  const errorLines = status.errors.length > 0
-    ? status.errors.slice(0, 3).map(e => `• ${e.substring(0, 100)}`).join('\n')
-    : 'No recent errors';
+  const errorLines =
+    status.errors.length > 0
+      ? status.errors
+          .slice(0, 3)
+          .map((e) => `• ${e.substring(0, 100)}`)
+          .join('\n')
+      : 'No recent errors';
 
   return `*Auto Blogger Status*
 
@@ -279,14 +335,17 @@ ${errorLines}`;
 /**
  * Format post stats for WhatsApp
  */
-export function formatPostStatsForWhatsApp(stats: {
-  total: number;
-  published: number;
-  failed: number;
-  pending: number;
-  bySite: Record<string, number>;
-  byDay: Record<string, number>;
-}, days: number): string {
+export function formatPostStatsForWhatsApp(
+  stats: {
+    total: number;
+    published: number;
+    failed: number;
+    pending: number;
+    bySite: Record<string, number>;
+    byDay: Record<string, number>;
+  },
+  days: number,
+): string {
   const siteLines = Object.entries(stats.bySite)
     .map(([site, count]) => `• ${site}: ${count} posts`)
     .join('\n');

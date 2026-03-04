@@ -12,7 +12,15 @@ export interface Lead {
   url?: string;
   budget?: string;
   score: number;
-  status: 'new' | 'contacted' | 'responded' | 'interview' | 'proposal_sent' | 'won' | 'lost' | 'skipped';
+  status:
+    | 'new'
+    | 'contacted'
+    | 'responded'
+    | 'interview'
+    | 'proposal_sent'
+    | 'won'
+    | 'lost'
+    | 'skipped';
   notes: string[];
   followUpDate?: string;
   proposalDraft?: string;
@@ -41,7 +49,14 @@ function ensureDir(): void {
 function loadData(): CRMData {
   ensureDir();
   if (!fs.existsSync(LEADS_FILE)) {
-    return { leads: [], stats: { totalWon: 0, totalRevenue: 0, lastUpdated: new Date().toISOString() } };
+    return {
+      leads: [],
+      stats: {
+        totalWon: 0,
+        totalRevenue: 0,
+        lastUpdated: new Date().toISOString(),
+      },
+    };
   }
   return JSON.parse(fs.readFileSync(LEADS_FILE, 'utf-8'));
 }
@@ -68,13 +83,13 @@ export function addLead(
     budget?: string;
     score?: number;
     clientName?: string;
-  }
+  },
 ): Lead {
   const data = loadData();
 
   // Check for duplicate (same URL or very similar title from same source)
   if (options?.url) {
-    const existing = data.leads.find(l => l.url === options.url);
+    const existing = data.leads.find((l) => l.url === options.url);
     if (existing) {
       return existing; // Return existing instead of creating duplicate
     }
@@ -109,10 +124,24 @@ export function addLead(
  */
 export function updateLead(
   id: string,
-  updates: Partial<Pick<Lead, 'status' | 'notes' | 'followUpDate' | 'proposalDraft' | 'clientName' | 'clientEmail' | 'score' | 'wonAmount' | 'hubspotContactId' | 'hubspotDealId'>>
+  updates: Partial<
+    Pick<
+      Lead,
+      | 'status'
+      | 'notes'
+      | 'followUpDate'
+      | 'proposalDraft'
+      | 'clientName'
+      | 'clientEmail'
+      | 'score'
+      | 'wonAmount'
+      | 'hubspotContactId'
+      | 'hubspotDealId'
+    >
+  >,
 ): Lead | null {
   const data = loadData();
-  const lead = data.leads.find(l => l.id === id);
+  const lead = data.leads.find((l) => l.id === id);
   if (!lead) return null;
 
   const statusChanged = updates.status && updates.status !== lead.status;
@@ -124,7 +153,8 @@ export function updateLead(
   if (updates.clientEmail) lead.clientEmail = updates.clientEmail;
   if (updates.score !== undefined) lead.score = updates.score;
   if (updates.wonAmount !== undefined) lead.wonAmount = updates.wonAmount;
-  if (updates.hubspotContactId) lead.hubspotContactId = updates.hubspotContactId;
+  if (updates.hubspotContactId)
+    lead.hubspotContactId = updates.hubspotContactId;
   if (updates.hubspotDealId) lead.hubspotDealId = updates.hubspotDealId;
   if (updates.notes) {
     lead.notes.push(...updates.notes);
@@ -155,7 +185,7 @@ export function updateLead(
  */
 export function addNote(id: string, note: string): Lead | null {
   const data = loadData();
-  const lead = data.leads.find(l => l.id === id);
+  const lead = data.leads.find((l) => l.id === id);
   if (!lead) return null;
 
   lead.notes.push(`[${new Date().toISOString().split('T')[0]}] ${note}`);
@@ -177,17 +207,21 @@ export function listLeads(filters?: {
   let leads = data.leads;
 
   if (filters?.status) {
-    leads = leads.filter(l => l.status === filters.status);
+    leads = leads.filter((l) => l.status === filters.status);
   }
   if (filters?.source) {
-    leads = leads.filter(l => l.source === filters.source);
+    leads = leads.filter((l) => l.source === filters.source);
   }
   if (filters?.minScore) {
-    leads = leads.filter(l => l.score >= filters.minScore!);
+    leads = leads.filter((l) => l.score >= filters.minScore!);
   }
 
   // Sort by score desc, then by creation date desc
-  leads.sort((a, b) => b.score - a.score || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  leads.sort(
+    (a, b) =>
+      b.score - a.score ||
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
 
   if (filters?.limit) {
     leads = leads.slice(0, filters.limit);
@@ -203,9 +237,11 @@ export function getFollowUps(): Lead[] {
   const data = loadData();
   const today = new Date().toISOString().split('T')[0];
 
-  return data.leads.filter(l =>
-    l.followUpDate && l.followUpDate <= today &&
-    !['won', 'lost', 'skipped'].includes(l.status)
+  return data.leads.filter(
+    (l) =>
+      l.followUpDate &&
+      l.followUpDate <= today &&
+      !['won', 'lost', 'skipped'].includes(l.status),
   );
 }
 
@@ -236,26 +272,34 @@ export function getPipelineStats(): {
     totalScore += lead.score;
   }
 
-  const contacted = (byStatus['contacted'] || 0) + (byStatus['responded'] || 0) +
-    (byStatus['interview'] || 0) + (byStatus['proposal_sent'] || 0) +
-    (byStatus['won'] || 0) + (byStatus['lost'] || 0);
+  const contacted =
+    (byStatus['contacted'] || 0) +
+    (byStatus['responded'] || 0) +
+    (byStatus['interview'] || 0) +
+    (byStatus['proposal_sent'] || 0) +
+    (byStatus['won'] || 0) +
+    (byStatus['lost'] || 0);
   const won = byStatus['won'] || 0;
-  const conversionRate = contacted > 0 ? `${Math.round((won / contacted) * 100)}%` : 'N/A';
+  const conversionRate =
+    contacted > 0 ? `${Math.round((won / contacted) * 100)}%` : 'N/A';
 
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const recentLeads = leads.filter(l => l.createdAt > weekAgo).length;
+  const recentLeads = leads.filter((l) => l.createdAt > weekAgo).length;
 
   const today = new Date().toISOString().split('T')[0];
-  const pendingFollowUps = leads.filter(l =>
-    l.followUpDate && l.followUpDate <= today &&
-    !['won', 'lost', 'skipped'].includes(l.status)
+  const pendingFollowUps = leads.filter(
+    (l) =>
+      l.followUpDate &&
+      l.followUpDate <= today &&
+      !['won', 'lost', 'skipped'].includes(l.status),
   ).length;
 
   return {
     total: leads.length,
     byStatus,
     bySource,
-    avgScore: leads.length > 0 ? Math.round((totalScore / leads.length) * 10) / 10 : 0,
+    avgScore:
+      leads.length > 0 ? Math.round((totalScore / leads.length) * 10) / 10 : 0,
     totalWon: data.stats.totalWon,
     totalRevenue: data.stats.totalRevenue,
     conversionRate,
@@ -271,11 +315,12 @@ export function searchLeads(query: string): Lead[] {
   const data = loadData();
   const q = query.toLowerCase();
 
-  return data.leads.filter(l =>
-    l.title.toLowerCase().includes(q) ||
-    l.description.toLowerCase().includes(q) ||
-    l.notes.some(n => n.toLowerCase().includes(q)) ||
-    (l.clientName && l.clientName.toLowerCase().includes(q))
+  return data.leads.filter(
+    (l) =>
+      l.title.toLowerCase().includes(q) ||
+      l.description.toLowerCase().includes(q) ||
+      l.notes.some((n) => n.toLowerCase().includes(q)) ||
+      (l.clientName && l.clientName.toLowerCase().includes(q)),
   );
 }
 
@@ -285,26 +330,37 @@ export function searchLeads(query: string): Lead[] {
 export function formatLeadsForWhatsApp(leads: Lead[]): string {
   if (leads.length === 0) return 'No leads found.';
 
-  return leads.slice(0, 15).map((lead, i) => {
-    const statusEmoji: Record<string, string> = {
-      new: '🆕', contacted: '📧', responded: '💬', interview: '🎤',
-      proposal_sent: '📝', won: '✅', lost: '❌', skipped: '⏭️',
-    };
-    const emoji = statusEmoji[lead.status] || '❓';
-    const budget = lead.budget ? ` • 💰 ${lead.budget}` : '';
-    const followUp = lead.followUpDate ? ` • 📅 ${lead.followUpDate}` : '';
+  return leads
+    .slice(0, 15)
+    .map((lead, i) => {
+      const statusEmoji: Record<string, string> = {
+        new: '🆕',
+        contacted: '📧',
+        responded: '💬',
+        interview: '🎤',
+        proposal_sent: '📝',
+        won: '✅',
+        lost: '❌',
+        skipped: '⏭️',
+      };
+      const emoji = statusEmoji[lead.status] || '❓';
+      const budget = lead.budget ? ` • 💰 ${lead.budget}` : '';
+      const followUp = lead.followUpDate ? ` • 📅 ${lead.followUpDate}` : '';
 
-    return `${i + 1}. ${emoji} *${lead.title}* [${lead.score}/10]
+      return `${i + 1}. ${emoji} *${lead.title}* [${lead.score}/10]
 ${lead.source}${budget}${followUp}
 Status: ${lead.status} • ID: ${lead.id}
 ${lead.url ? `🔗 ${lead.url}` : ''}`;
-  }).join('\n\n');
+    })
+    .join('\n\n');
 }
 
 /**
  * Format pipeline stats for WhatsApp
  */
-export function formatStatsForWhatsApp(stats: ReturnType<typeof getPipelineStats>): string {
+export function formatStatsForWhatsApp(
+  stats: ReturnType<typeof getPipelineStats>,
+): string {
   const statusLines = Object.entries(stats.byStatus)
     .map(([status, count]) => `• ${status}: ${count}`)
     .join('\n');
@@ -345,7 +401,7 @@ async function syncLeadToHubSpot(lead: Lead): Promise<void> {
     if (result.success && result.contactId) {
       // Write HubSpot IDs back to local lead
       const data = loadData();
-      const local = data.leads.find(l => l.id === lead.id);
+      const local = data.leads.find((l) => l.id === lead.id);
       if (local) {
         local.hubspotContactId = result.contactId;
         local.hubspotDealId = result.dealId;
@@ -357,9 +413,13 @@ async function syncLeadToHubSpot(lead: Lead): Promise<void> {
   }
 }
 
-async function updateHubSpotDealStage(dealId: string, status: string): Promise<void> {
+async function updateHubSpotDealStage(
+  dealId: string,
+  status: string,
+): Promise<void> {
   try {
-    const { isHubSpotConfigured, updateDealStage } = await import('./hubspot-sync.js');
+    const { isHubSpotConfigured, updateDealStage } =
+      await import('./hubspot-sync.js');
     if (!isHubSpotConfigured()) return;
     await updateDealStage(dealId, status);
   } catch {

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { isCalendarConfigured, listEvents, createEvent, findFreeTime } from './calendar-tools.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -41,15 +42,50 @@ const server = new McpServer({
 
 server.tool(
   'send_message',
-  "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool if you need to communicate with the user or group.",
+  `Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool if you need to communicate with the user or group.
+
+DESTINATION ROUTING: Optionally specify a named destination to send the message to a different channel (e.g., "reminders" for Telegram, "findings" for Slack). Read /workspace/ipc/destinations.json for available destinations. Omit to send to the current chat.`,
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    destination: z.string().optional().describe('Named destination from destinations.json (e.g., "reminders", "findings"). Omit to send to current chat.'),
   },
   async (args) => {
+    let targetJid = chatJid;
+
+    // Resolve named destination to a JID
+    if (args.destination) {
+      const destFile = path.join(IPC_DIR, 'destinations.json');
+      try {
+        if (fs.existsSync(destFile)) {
+          const destinations = JSON.parse(fs.readFileSync(destFile, 'utf-8')) as Array<{ name: string; targetJid: string }>;
+          const dest = destinations.find(d => d.name === args.destination);
+          if (dest) {
+            targetJid = dest.targetJid;
+          } else {
+            const available = destinations.map(d => d.name).join(', ');
+            return {
+              content: [{ type: 'text' as const, text: `Unknown destination "${args.destination}". Available: ${available || 'none'}` }],
+              isError: true,
+            };
+          }
+        } else {
+          return {
+            content: [{ type: 'text' as const, text: `No destinations configured. Send without destination to use current chat.` }],
+            isError: true,
+          };
+        }
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error reading destinations: ${err instanceof Error ? err.message : String(err)}` }],
+          isError: true,
+        };
+      }
+    }
+
     const data: Record<string, string | undefined> = {
       type: 'message',
-      chatJid,
+      chatJid: targetJid,
       text: args.text,
       sender: args.sender || undefined,
       groupFolder,
@@ -58,7 +94,8 @@ server.tool(
 
     writeIpcFile(MESSAGES_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
+    const destNote = args.destination ? ` (→ ${args.destination})` : '';
+    return { content: [{ type: 'text' as const, text: `Message sent${destNote}.` }] };
   },
 );
 
@@ -291,6 +328,325 @@ Use available_groups.json to find the JID for a group. The folder name should be
     };
   },
 );
+
+// --- Destination routing (main group only) ---
+
+if (isMain) {
+  server.tool(
+    'set_destinations',
+    `Configure named message destinations for routing output to different channels.
+Each destination maps a name (e.g., "reminders", "findings") to a target JID (e.g., "tg:12345", "slack:C0123").
+This persists across sessions. Use list_destinations to see current config.
+
+JID formats:
+• WhatsApp group: "120363...@g.us"
+• WhatsApp DM: "1234567890@s.whatsapp.net"
+• Telegram: "tg:<chat_id>"
+• Slack: "slack:<channel_id>"`,
+    {
+      destinations: z.array(z.object({
+        name: z.string().describe('Destination name (e.g., "reminders", "findings", "alerts")'),
+        targetJid: z.string().describe('Target JID (e.g., "tg:12345", "slack:C0123ABC")'),
+        description: z.string().optional().describe('What this destination is for'),
+      })).describe('Array of named destinations'),
+      target_group_jid: z.string().optional().describe('JID of the group to set destinations for. Defaults to the current group.'),
+    },
+    async (args) => {
+      const targetJid = args.target_group_jid || chatJid;
+
+      const data = {
+        type: 'set_destinations',
+        targetJid,
+        destinations: args.destinations,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+
+      const requestId = `dest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const resultDir = path.join(IPC_DIR, 'dest_results');
+
+      writeIpcFile(TASKS_DIR, { ...data, requestId });
+
+      // Poll for confirmation
+      const resultFile = path.join(resultDir, `${requestId}.json`);
+      let elapsed = 0;
+      while (elapsed < 10000) {
+        if (fs.existsSync(resultFile)) {
+          try {
+            const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+            fs.unlinkSync(resultFile);
+            if (result.error) {
+              return { content: [{ type: 'text' as const, text: `Error: ${result.error}` }], isError: true };
+            }
+            // Update local destinations.json immediately
+            const destFile = path.join(IPC_DIR, 'destinations.json');
+            fs.writeFileSync(destFile, JSON.stringify(args.destinations, null, 2));
+            return {
+              content: [{ type: 'text' as const, text: `Destinations configured for ${result.groupName || targetJid}:\n${args.destinations.map(d => `• ${d.name} → ${d.targetJid}${d.description ? ` (${d.description})` : ''}`).join('\n')}` }],
+            };
+          } catch (err) {
+            return { content: [{ type: 'text' as const, text: `Failed to read result: ${err}` }], isError: true };
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+        elapsed += 500;
+      }
+
+      return { content: [{ type: 'text' as const, text: 'Destination config request timed out.' }], isError: true };
+    },
+  );
+}
+
+// --- Google Calendar tools (only registered if credentials are mounted) ---
+if (isCalendarConfigured()) {
+  server.tool(
+    'calendar_list_events',
+    'List upcoming Google Calendar events in a date range. Returns event titles, times, attendees, and locations.',
+    {
+      start: z.string().describe('Start of range, ISO 8601 (e.g., "2026-02-27T00:00:00")'),
+      end: z.string().describe('End of range, ISO 8601 (e.g., "2026-02-28T00:00:00")'),
+      max_results: z.number().optional().describe('Max events to return (default: 20)'),
+    },
+    async (args) => {
+      try {
+        const result = await listEvents(args.start, args.end, args.max_results);
+        return { content: [{ type: 'text' as const, text: result }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Calendar error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    },
+  );
+
+  server.tool(
+    'calendar_create_event',
+    'Create a Google Calendar event. Can include attendees (sends invites) and location.',
+    {
+      summary: z.string().describe('Event title'),
+      start: z.string().describe('Start time, ISO 8601 (e.g., "2026-02-28T14:00:00")'),
+      end: z.string().describe('End time, ISO 8601 (e.g., "2026-02-28T15:00:00")'),
+      description: z.string().optional().describe('Event description/notes'),
+      attendees: z.array(z.string()).optional().describe('Email addresses of attendees'),
+      location: z.string().optional().describe('Event location'),
+    },
+    async (args) => {
+      try {
+        const result = await createEvent(args.summary, args.start, args.end, args.description, args.attendees, args.location);
+        return { content: [{ type: 'text' as const, text: result }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Calendar error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    },
+  );
+
+  server.tool(
+    'calendar_find_free_time',
+    'Find available time slots on a given date. Checks your calendar and returns open slots of the requested duration.',
+    {
+      date: z.string().describe('Date to check, YYYY-MM-DD format (e.g., "2026-02-28")'),
+      duration_minutes: z.number().optional().describe('Slot duration in minutes (default: 60)'),
+      start_hour: z.number().optional().describe('Business hours start (default: 9)'),
+      end_hour: z.number().optional().describe('Business hours end (default: 17)'),
+    },
+    async (args) => {
+      try {
+        const result = await findFreeTime(args.date, args.duration_minutes, args.start_hour, args.end_hour);
+        return { content: [{ type: 'text' as const, text: result }] };
+      } catch (err) {
+        return { content: [{ type: 'text' as const, text: `Calendar error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    },
+  );
+}
+
+// --- Webhook management tools ---
+
+server.tool(
+  'enable_webhook',
+  `Enable inbound webhooks for a group. Returns the webhook URL and secret for HMAC-SHA256 signing.
+
+External services POST JSON to the webhook URL with:
+- Body: { "text": "message content", "sender": "Service Name" }
+- Header: X-Webhook-Signature: sha256=<hmac-of-body-with-secret>
+
+The message gets delivered to the group's agent just like a regular chat message.`,
+  {
+    target_folder: z.string().optional().describe('(Main only) Group folder to enable webhooks for. Defaults to current group.'),
+  },
+  async (args) => {
+    const targetFolder = isMain && args.target_folder ? args.target_folder : groupFolder;
+    if (!isMain && targetFolder !== groupFolder) {
+      return { content: [{ type: 'text' as const, text: 'Only the main group can enable webhooks for other groups.' }], isError: true };
+    }
+
+    const requestId = `wh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'enable_webhook',
+      requestId,
+      folder: targetFolder,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Poll for result
+    const resultDir = path.join(IPC_DIR, 'webhook_results');
+    const resultFile = path.join(resultDir, `${requestId}.json`);
+    let elapsed = 0;
+    while (elapsed < 10000) {
+      if (fs.existsSync(resultFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+          fs.unlinkSync(resultFile);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Webhook enabled for "${result.groupFolder}".\n\nURL: http://<host>:9877/webhook/${result.groupFolder}\nSecret: ${result.secret}\n\nSend POST with JSON body {"text": "..."} and X-Webhook-Signature header.`,
+            }],
+          };
+        } catch (err) {
+          return { content: [{ type: 'text' as const, text: `Failed to read result: ${err}` }], isError: true };
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+      elapsed += 500;
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Webhook enable request timed out.' }], isError: true };
+  },
+);
+
+// --- X/Twitter tools (main group only, uses IPC → host Playwright) ---
+
+const X_RESULTS_DIR = path.join(IPC_DIR, 'x_results');
+
+async function waitForXResult(requestId: string, maxWait = 120000): Promise<{ success: boolean; message: string }> {
+  const resultFile = path.join(X_RESULTS_DIR, `${requestId}.json`);
+  const pollInterval = 1000;
+  let elapsed = 0;
+
+  while (elapsed < maxWait) {
+    if (fs.existsSync(resultFile)) {
+      try {
+        const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+        fs.unlinkSync(resultFile);
+        return result;
+      } catch (err) {
+        return { success: false, message: `Failed to read result: ${err}` };
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+    elapsed += pollInterval;
+  }
+
+  return { success: false, message: 'Request timed out (120s)' };
+}
+
+if (isMain) {
+  server.tool(
+    'x_post',
+    `Post a tweet to X (Twitter). Main group only.
+The host machine will execute browser automation to post the tweet.
+Content must be within X's 280 character limit.`,
+    {
+      content: z.string().max(280).describe('The tweet content to post (max 280 characters)'),
+    },
+    async (args) => {
+      const requestId = `xpost-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      writeIpcFile(TASKS_DIR, {
+        type: 'x_post',
+        requestId,
+        content: args.content,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+      const result = await waitForXResult(requestId);
+      return { content: [{ type: 'text' as const, text: result.message }], isError: !result.success };
+    },
+  );
+
+  server.tool(
+    'x_like',
+    'Like a tweet on X (Twitter). Main group only. Provide the tweet URL.',
+    {
+      tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123)'),
+    },
+    async (args) => {
+      const requestId = `xlike-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      writeIpcFile(TASKS_DIR, {
+        type: 'x_like',
+        requestId,
+        tweetUrl: args.tweet_url,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+      const result = await waitForXResult(requestId);
+      return { content: [{ type: 'text' as const, text: result.message }], isError: !result.success };
+    },
+  );
+
+  server.tool(
+    'x_reply',
+    'Reply to a tweet on X (Twitter). Main group only. Provide the tweet URL and reply content.',
+    {
+      tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123)'),
+      content: z.string().max(280).describe('The reply content (max 280 characters)'),
+    },
+    async (args) => {
+      const requestId = `xreply-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      writeIpcFile(TASKS_DIR, {
+        type: 'x_reply',
+        requestId,
+        tweetUrl: args.tweet_url,
+        content: args.content,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+      const result = await waitForXResult(requestId);
+      return { content: [{ type: 'text' as const, text: result.message }], isError: !result.success };
+    },
+  );
+
+  server.tool(
+    'x_retweet',
+    'Retweet a tweet on X (Twitter). Main group only. Provide the tweet URL.',
+    {
+      tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123)'),
+    },
+    async (args) => {
+      const requestId = `xretweet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      writeIpcFile(TASKS_DIR, {
+        type: 'x_retweet',
+        requestId,
+        tweetUrl: args.tweet_url,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+      const result = await waitForXResult(requestId);
+      return { content: [{ type: 'text' as const, text: result.message }], isError: !result.success };
+    },
+  );
+
+  server.tool(
+    'x_quote',
+    'Quote tweet on X (Twitter). Main group only. Retweet with your own comment.',
+    {
+      tweet_url: z.string().describe('The tweet URL (e.g., https://x.com/user/status/123)'),
+      comment: z.string().max(280).describe('Your comment for the quote tweet (max 280 characters)'),
+    },
+    async (args) => {
+      const requestId = `xquote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      writeIpcFile(TASKS_DIR, {
+        type: 'x_quote',
+        requestId,
+        tweetUrl: args.tweet_url,
+        comment: args.comment,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+      const result = await waitForXResult(requestId);
+      return { content: [{ type: 'text' as const, text: result.message }], isError: !result.success };
+    },
+  );
+}
 
 // Start the stdio transport
 const transport = new StdioServerTransport();

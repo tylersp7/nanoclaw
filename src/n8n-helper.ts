@@ -70,7 +70,7 @@ export async function getForumLatest(limit: number = 30): Promise<ForumPost[]> {
  */
 export async function searchForum(
   keywords: string[],
-  solved: boolean = false
+  solved: boolean = false,
 ): Promise<ForumPost[]> {
   try {
     const query = keywords.join(' ');
@@ -110,7 +110,9 @@ export async function searchForum(
 /**
  * Get unanswered posts (posts with 0-1 replies)
  */
-export async function getUnansweredPosts(keywords?: string[]): Promise<ForumPost[]> {
+export async function getUnansweredPosts(
+  keywords?: string[],
+): Promise<ForumPost[]> {
   let posts: ForumPost[];
 
   if (keywords && keywords.length > 0) {
@@ -119,7 +121,7 @@ export async function getUnansweredPosts(keywords?: string[]): Promise<ForumPost
     posts = await getForumLatest(50);
   }
 
-  return posts.filter(post => post.replies <= 1 && !post.solved);
+  return posts.filter((post) => post.replies <= 1 && !post.solved);
 }
 
 /**
@@ -178,20 +180,26 @@ export function scoreForumPost(post: ForumPost, userSkills: string[]): number {
 
   if (!post.solved) score += 2;
 
-  const hoursSincePost = (Date.now() - new Date(post.createdAt).getTime()) / (1000 * 60 * 60);
+  const hoursSincePost =
+    (Date.now() - new Date(post.createdAt).getTime()) / (1000 * 60 * 60);
   if (hoursSincePost < 24) score += 2;
   else if (hoursSincePost < 72) score += 1;
 
   if (post.views > 50) score += 1;
   if (post.views > 100) score += 1;
 
-  const skillMatches = userSkills.filter(skill =>
-    text.includes(skill.toLowerCase())
+  const skillMatches = userSkills.filter((skill) =>
+    text.includes(skill.toLowerCase()),
   ).length;
   score += Math.min(skillMatches, 3);
 
   if (text.includes('complex') || text.includes('advanced')) score += 1;
-  if (text.includes('self-host') || text.includes('vps') || text.includes('docker')) score += 2;
+  if (
+    text.includes('self-host') ||
+    text.includes('vps') ||
+    text.includes('docker')
+  )
+    score += 2;
   if (text.includes('api') || text.includes('integration')) score += 1;
   if (text.includes('security') || text.includes('authentication')) score += 1;
 
@@ -204,7 +212,10 @@ export function scoreForumPost(post: ForumPost, userSkills: string[]): number {
 /**
  * Score GitHub issue for contribution opportunity
  */
-export function scoreGitHubIssue(issue: GitHubIssue, userSkills: string[]): number {
+export function scoreGitHubIssue(
+  issue: GitHubIssue,
+  userSkills: string[],
+): number {
   let score = 5;
 
   const text = `${issue.title} ${issue.body}`.toLowerCase();
@@ -217,12 +228,13 @@ export function scoreGitHubIssue(issue: GitHubIssue, userSkills: string[]): numb
   if (issue.comments === 0) score += 2;
   else if (issue.comments <= 2) score += 1;
 
-  const skillMatches = userSkills.filter(skill =>
-    text.includes(skill.toLowerCase())
+  const skillMatches = userSkills.filter((skill) =>
+    text.includes(skill.toLowerCase()),
   ).length;
   score += Math.min(skillMatches, 3);
 
-  const daysSinceCreated = (Date.now() - new Date(issue.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+  const daysSinceCreated =
+    (Date.now() - new Date(issue.createdAt).getTime()) / (1000 * 60 * 60 * 24);
   if (daysSinceCreated < 7) score += 2;
   else if (daysSinceCreated < 30) score += 1;
 
@@ -236,7 +248,7 @@ export async function findTemplateOpportunities(): Promise<ForumPost[]> {
   const posts = await getForumLatest(100);
 
   return posts
-    .filter(post => !post.solved && post.views > 30 && post.replies >= 2)
+    .filter((post) => !post.solved && post.views > 30 && post.replies >= 2)
     .sort((a, b) => b.views - a.views)
     .slice(0, 10);
 }
@@ -245,7 +257,7 @@ export async function findTemplateOpportunities(): Promise<ForumPost[]> {
  * Format posts for WhatsApp
  */
 export function formatForumPostsForWhatsApp(
-  posts: Array<ForumPost & { score?: number }>
+  posts: Array<ForumPost & { score?: number }>,
 ): string {
   if (posts.length === 0) return 'No posts found.';
 
@@ -254,7 +266,8 @@ export function formatForumPostsForWhatsApp(
     .map((post, i) => {
       const time = new Date(post.createdAt).toLocaleDateString();
       const scoreStr = post.score ? ` [Score: ${post.score}/10]` : '';
-      const tags = post.tags.length > 0 ? ` | Tags: ${post.tags.join(', ')}` : '';
+      const tags =
+        post.tags.length > 0 ? ` | Tags: ${post.tags.join(', ')}` : '';
 
       return `${i + 1}. ${post.solved ? '✅' : '❓'} *${post.title}*${scoreStr}
 ${post.author} • ${time} • 👁️ ${post.views} • 💬 ${post.replies}${tags}
@@ -270,7 +283,7 @@ ${post.excerpt ? post.excerpt.substring(0, 150) : 'Click link to view'}${post.ex
  * Format GitHub issues for WhatsApp
  */
 export function formatGitHubIssuesForWhatsApp(
-  issues: Array<GitHubIssue & { score?: number }>
+  issues: Array<GitHubIssue & { score?: number }>,
 ): string {
   if (issues.length === 0) return 'No issues found.';
 

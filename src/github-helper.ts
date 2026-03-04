@@ -14,9 +14,15 @@ let credentials: GitHubCredentials | null = null;
 function loadCredentials(): GitHubCredentials {
   if (credentials) return credentials;
 
-  const credPath = path.join(os.homedir(), '.nanoclaw-github', 'credentials.json');
+  const credPath = path.join(
+    os.homedir(),
+    '.nanoclaw-github',
+    'credentials.json',
+  );
   if (!fs.existsSync(credPath)) {
-    throw new Error('GitHub credentials not found. Run /add-github-monitor to set up.');
+    throw new Error(
+      'GitHub credentials not found. Run /add-github-monitor to set up.',
+    );
   }
 
   credentials = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
@@ -96,7 +102,10 @@ export async function getMyRepos(): Promise<GitHubRepo[]> {
 /**
  * Get repository activity/stats
  */
-export async function getRepoActivity(owner: string, repo: string): Promise<RepoActivity> {
+export async function getRepoActivity(
+  owner: string,
+  repo: string,
+): Promise<RepoActivity> {
   const client = getClient();
 
   const [repoData, commits, issues] = await Promise.all([
@@ -107,11 +116,11 @@ export async function getRepoActivity(owner: string, repo: string): Promise<Repo
 
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const recentCommits = commits.data.filter(
-    (c) => c.commit.author?.date && new Date(c.commit.author.date) > weekAgo
+    (c) => c.commit.author?.date && new Date(c.commit.author.date) > weekAgo,
   ).length;
 
   const newIssues = issues.data.filter(
-    (i) => new Date(i.created_at) > weekAgo
+    (i) => new Date(i.created_at) > weekAgo,
   ).length;
 
   return {
@@ -128,7 +137,7 @@ export async function getRepoActivity(owner: string, repo: string): Promise<Repo
  */
 export async function findHelpWantedIssues(
   keywords: string[],
-  labels: string[] = ['help wanted', 'good first issue']
+  labels: string[] = ['help wanted', 'good first issue'],
 ): Promise<GitHubIssue[]> {
   const client = getClient();
 
@@ -163,7 +172,7 @@ export async function findHelpWantedIssues(
  */
 export async function getTrendingRepos(
   keywords: string[],
-  language?: string
+  language?: string,
 ): Promise<GitHubRepo[]> {
   const client = getClient();
 
@@ -204,7 +213,7 @@ export async function getTrendingRepos(
 export async function generatePortfolioSummary(
   owner: string,
   repo: string,
-  since: Date
+  since: Date,
 ): Promise<string> {
   const client = getClient();
 
@@ -217,7 +226,9 @@ export async function generatePortfolioSummary(
 
   const commitMessages = commits.data.map((c) => c.commit.message);
 
-  const features = commitMessages.filter((m) => /^(feat|feature|add)/i.test(m)).length;
+  const features = commitMessages.filter((m) =>
+    /^(feat|feature|add)/i.test(m),
+  ).length;
   const fixes = commitMessages.filter((m) => /^fix/i.test(m)).length;
   const refactors = commitMessages.filter((m) => /^refactor/i.test(m)).length;
   const docs = commitMessages.filter((m) => /^docs/i.test(m)).length;
@@ -239,7 +250,9 @@ export function scoreIssue(issue: GitHubIssue, userSkills: string[]): number {
 
   const text = `${issue.title} ${issue.body || ''}`.toLowerCase();
 
-  const matches = userSkills.filter((skill) => text.includes(skill.toLowerCase()));
+  const matches = userSkills.filter((skill) =>
+    text.includes(skill.toLowerCase()),
+  );
   score += Math.min(matches.length, 3);
 
   if (issue.labels.includes('good first issue')) score += 2;
