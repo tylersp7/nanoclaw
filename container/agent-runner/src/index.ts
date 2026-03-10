@@ -61,6 +61,7 @@ interface SDKUserMessage {
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
+const IPC_INPUT_INTERRUPT_SENTINEL = path.join(IPC_INPUT_DIR, '_interrupt');
 const IPC_POLL_MS = 500;
 
 /**
@@ -197,7 +198,7 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 
     try {
       const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
+      const { messages, metadata } = parseTranscript(content);
 
       if (messages.length === 0) {
         log('No messages to archive');
@@ -214,10 +215,44 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const filename = `${date}-${name}.md`;
       const filePath = path.join(conversationsDir, filename);
 
-      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
+      const markdown = formatTranscriptMarkdown(messages, metadata, summary, assistantName, sessionId);
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
+
+      // Generate and write structured summary
+      try {
+        const summariesDir = path.join(conversationsDir, 'summaries');
+        fs.mkdirSync(summariesDir, { recursive: true });
+
+        const convSummary = generateConversationSummary(messages, metadata, summary);
+        const summaryMarkdown = formatSummaryMarkdown(convSummary);
+        const summaryFilename = `${date}-${name}.summary.md`;
+        const summaryPath = path.join(summariesDir, summaryFilename);
+        fs.writeFileSync(summaryPath, summaryMarkdown);
+
+        log(`Wrote conversation summary to ${summaryPath}`);
+
+        // Maintain rolling session context for cross-compaction continuity
+        try {
+          const contextPath = '/workspace/group/session-context.md';
+
+          let existingContext = '';
+          if (fs.existsSync(contextPath)) {
+            existingContext = fs.readFileSync(contextPath, 'utf-8');
+          }
+
+          const newEntry = formatContextEntry(convSummary, metadata);
+          const updatedContext = mergeContextEntries(existingContext, newEntry, 5);
+          fs.writeFileSync(contextPath, updatedContext);
+
+          log(`Updated session-context.md (${updatedContext.length} chars)`);
+        } catch (contextErr) {
+          log(`Failed to update session context: ${contextErr instanceof Error ? contextErr.message : String(contextErr)}`);
+        }
+      } catch (summaryErr) {
+        log(`Failed to write summary: ${summaryErr instanceof Error ? summaryErr.message : String(summaryErr)}`);
+      }
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -263,13 +298,57 @@ function generateFallbackName(): string {
   return `conversation-${time.getHours().toString().padStart(2, '0')}${time.getMinutes().toString().padStart(2, '0')}`;
 }
 
+interface ConversationSummary {
+  title: string;
+  date: string;
+  keyFacts: string[];
+  decisions: string[];
+  actionItems: string[];
+  toolsUsed: string[];
+  errorsSummary: string | null;
+}
+
 interface ParsedMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
-function parseTranscript(content: string): ParsedMessage[] {
+interface TranscriptMetadata {
+  messageCount: number;
+  hasToolUse: boolean;
+  hasErrors: boolean;
+  topics: string[];
+  outcome: 'success' | 'error' | 'incomplete';
+  durationEstimate: 'short' | 'medium' | 'long';
+}
+
+interface ParsedTranscript {
+  messages: ParsedMessage[];
+  metadata: TranscriptMetadata;
+}
+
+/** Map tool names to human-readable topic labels. */
+const TOOL_TOPIC_MAP: Record<string, string> = {
+  Bash: 'cli',
+  Read: 'files',
+  Write: 'files',
+  Edit: 'files',
+  Glob: 'files',
+  Grep: 'search',
+  WebSearch: 'research',
+  WebFetch: 'research',
+  Task: 'orchestration',
+  TeamCreate: 'orchestration',
+  SendMessage: 'orchestration',
+  NotebookEdit: 'notebook',
+};
+
+function parseTranscript(content: string): ParsedTranscript {
   const messages: ParsedMessage[] = [];
+  let hasToolUse = false;
+  let hasErrors = false;
+  const topicCounts = new Map<string, number>();
+  let lastEntryHadError = false;
 
   for (const line of content.split('\n')) {
     if (!line.trim()) continue;
@@ -281,20 +360,352 @@ function parseTranscript(content: string): ParsedMessage[] {
           : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
         if (text) messages.push({ role: 'user', content: text });
       } else if (entry.type === 'assistant' && entry.message?.content) {
-        const textParts = entry.message.content
+        const blocks = entry.message.content;
+        const textParts = blocks
           .filter((c: { type: string }) => c.type === 'text')
           .map((c: { text: string }) => c.text);
         const text = textParts.join('');
         if (text) messages.push({ role: 'assistant', content: text });
+
+        // Detect tool use and extract topics
+        for (const block of blocks) {
+          if (block.type === 'tool_use') {
+            hasToolUse = true;
+            const toolName: string = block.name || '';
+
+            // Check direct map first
+            const directTopic = TOOL_TOPIC_MAP[toolName];
+            if (directTopic) {
+              topicCounts.set(directTopic, (topicCounts.get(directTopic) || 0) + 1);
+            } else if (toolName.startsWith('mcp__nanoclaw')) {
+              topicCounts.set('ipc', (topicCounts.get('ipc') || 0) + 1);
+            } else if (toolName.startsWith('mcp__gmail')) {
+              topicCounts.set('email', (topicCounts.get('email') || 0) + 1);
+            } else if (toolName.startsWith('mcp__parallel')) {
+              topicCounts.set('research', (topicCounts.get('research') || 0) + 1);
+            }
+          }
+
+          // Detect errors in text content
+          if (block.type === 'text' && typeof block.text === 'string') {
+            if (/\bError:|Failed to |error occurred/i.test(block.text)) {
+              hasErrors = true;
+            }
+          }
+
+          // Detect errors in tool results
+          if (block.type === 'tool_result' && block.is_error) {
+            hasErrors = true;
+          }
+        }
+
+        // Track whether the last assistant entry had error signals
+        lastEntryHadError = blocks.some(
+          (b: { type: string; text?: string; is_error?: boolean }) =>
+            (b.type === 'text' && typeof b.text === 'string' && /\bError:|Failed to |error occurred/i.test(b.text)) ||
+            (b.type === 'tool_result' && b.is_error)
+        );
       }
     } catch {
     }
   }
 
-  return messages;
+  // Build sorted topics (top 5 by frequency)
+  const topics = [...topicCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([topic]) => topic);
+
+  // Determine outcome
+  let outcome: TranscriptMetadata['outcome'] = 'incomplete';
+  if (messages.length > 0) {
+    if (lastEntryHadError || (hasErrors && messages[messages.length - 1]?.role === 'assistant')) {
+      // Check if the very last assistant message contains error signals
+      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+      if (lastAssistant && /\bError:|Failed to |error occurred/i.test(lastAssistant.content)) {
+        outcome = 'error';
+      } else {
+        outcome = 'success';
+      }
+    } else if (messages[messages.length - 1]?.role === 'assistant') {
+      outcome = 'success';
+    }
+  }
+
+  // Duration estimate based on message count
+  const msgCount = messages.length;
+  const durationEstimate: TranscriptMetadata['durationEstimate'] =
+    msgCount < 5 ? 'short' : msgCount <= 20 ? 'medium' : 'long';
+
+  return {
+    messages,
+    metadata: {
+      messageCount: msgCount,
+      hasToolUse,
+      hasErrors,
+      topics,
+      outcome,
+      durationEstimate,
+    },
+  };
 }
 
-function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
+function generateConversationSummary(
+  messages: ParsedMessage[],
+  metadata: TranscriptMetadata,
+  title?: string | null,
+): ConversationSummary {
+  const date = new Date().toISOString().split('T')[0];
+
+  // Extract key facts from the last few assistant messages (conclusions live at the end)
+  const keyFacts: string[] = [];
+  const assistantMessages = messages.filter(m => m.role === 'assistant');
+  const tailMessages = assistantMessages.slice(-5);
+  const factPatterns = [
+    /(?:completed|created|updated|deleted|installed|configured|deployed|fixed|resolved|generated|wrote|built|added|removed|migrated|refactored)\s+(.{10,80})/gi,
+    /(?:successfully|done|finished|ready)\s*[:\-]?\s*(.{10,80})/gi,
+    /(?:the result|output|summary)[:\s]+(.{10,80})/gi,
+  ];
+  for (const msg of tailMessages) {
+    for (const pattern of factPatterns) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(msg.content);
+      if (match) {
+        const fact = match[0].trim().replace(/\s+/g, ' ');
+        if (fact.length <= 120 && !keyFacts.some(f => f === fact)) {
+          keyFacts.push(fact);
+        }
+      }
+    }
+    if (keyFacts.length >= 5) break;
+  }
+
+  // Extract decisions
+  const decisions: string[] = [];
+  const decisionPatterns = [
+    /(?:decided to|chose to|will use|going with|opted for|switching to|using)\s+(.{10,80})/gi,
+    /(?:let's|we'll|I'll)\s+(.{10,80})/gi,
+  ];
+  for (const msg of assistantMessages) {
+    for (const pattern of decisionPatterns) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(msg.content);
+      if (match) {
+        const decision = match[0].trim().replace(/\s+/g, ' ');
+        if (decision.length <= 120 && !decisions.some(d => d === decision)) {
+          decisions.push(decision);
+        }
+      }
+    }
+    if (decisions.length >= 5) break;
+  }
+
+  // Extract action items from the last few messages
+  const actionItems: string[] = [];
+  const actionPatterns = [
+    /(?:TODO|FIXME)[:\s]+(.{10,80})/gi,
+    /(?:follow up|next step|need to|should|needs to|remember to|don't forget to)\s+(.{10,80})/gi,
+  ];
+  const lastMessages = messages.slice(-6);
+  for (const msg of lastMessages) {
+    for (const pattern of actionPatterns) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(msg.content);
+      if (match) {
+        const item = (match[2] || match[1] || match[0]).trim().replace(/\s+/g, ' ');
+        if (item.length <= 120 && !actionItems.some(a => a === item)) {
+          actionItems.push(item);
+        }
+      }
+    }
+    if (actionItems.length >= 5) break;
+  }
+
+  // Tools used — already available as human-readable topics from metadata
+  const toolsUsed = [...metadata.topics];
+
+  // Errors summary
+  let errorsSummary: string | null = null;
+  if (metadata.hasErrors) {
+    for (const msg of messages) {
+      if (msg.role === 'assistant') {
+        const errorMatch = msg.content.match(/(?:Error:|Failed to |error occurred)[^\n]{0,100}/i);
+        if (errorMatch) {
+          errorsSummary = errorMatch[0].trim();
+          break;
+        }
+      }
+    }
+    if (!errorsSummary) {
+      errorsSummary = 'Errors detected during conversation';
+    }
+  }
+
+  return {
+    title: title || 'Conversation',
+    date,
+    keyFacts: keyFacts.slice(0, 5),
+    decisions: decisions.slice(0, 5),
+    actionItems: actionItems.slice(0, 5),
+    toolsUsed,
+    errorsSummary,
+  };
+}
+
+function formatSummaryMarkdown(summary: ConversationSummary): string {
+  const lines: string[] = [];
+
+  lines.push(`# Summary: ${summary.title}`);
+  lines.push(`Date: ${summary.date}`);
+  lines.push('');
+
+  lines.push('## Key Facts');
+  if (summary.keyFacts.length > 0) {
+    for (const fact of summary.keyFacts) {
+      lines.push(`- ${fact}`);
+    }
+  } else {
+    lines.push('- No notable facts extracted');
+  }
+  lines.push('');
+
+  lines.push('## Decisions');
+  if (summary.decisions.length > 0) {
+    for (const decision of summary.decisions) {
+      lines.push(`- ${decision}`);
+    }
+  } else {
+    lines.push('- No decisions recorded');
+  }
+  lines.push('');
+
+  lines.push('## Action Items');
+  if (summary.actionItems.length > 0) {
+    for (const item of summary.actionItems) {
+      lines.push(`- [ ] ${item}`);
+    }
+  } else {
+    lines.push('- None');
+  }
+  lines.push('');
+
+  lines.push('## Tools Used');
+  lines.push(summary.toolsUsed.length > 0 ? summary.toolsUsed.join(', ') : 'None');
+  lines.push('');
+
+  lines.push('## Errors');
+  lines.push(summary.errorsSummary || 'None');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Format a single session context entry from a conversation summary.
+ */
+function formatContextEntry(summary: ConversationSummary, metadata: TranscriptMetadata): string {
+  const lines: string[] = [];
+
+  lines.push(`## Session: ${summary.date} — ${summary.title}`);
+  lines.push(`Outcome: ${metadata.outcome} | Messages: ${metadata.messageCount} | Topics: ${metadata.topics.join(', ') || 'general'}`);
+  lines.push('');
+
+  if (summary.keyFacts.length > 0) {
+    lines.push('**Key Facts:**');
+    for (const fact of summary.keyFacts) {
+      lines.push(`- ${fact}`);
+    }
+    lines.push('');
+  }
+
+  if (summary.decisions.length > 0) {
+    lines.push('**Decisions:**');
+    for (const decision of summary.decisions) {
+      lines.push(`- ${decision}`);
+    }
+    lines.push('');
+  }
+
+  if (summary.actionItems.length > 0) {
+    lines.push('**Action Items:**');
+    for (const item of summary.actionItems) {
+      lines.push(`- ${item}`);
+    }
+    lines.push('');
+  }
+
+  // Trim trailing blank lines and cap total length
+  let result = lines.join('\n').trimEnd();
+  if (result.length > 500) {
+    result = result.slice(0, 497) + '...';
+  }
+  return result;
+}
+
+/**
+ * Merge a new context entry into the existing session-context.md content.
+ * Keeps only the last `maxEntries` entries.
+ */
+function mergeContextEntries(existing: string, newEntry: string, maxEntries: number): string {
+  const HEADER = `# Session Context\n\nRolling context from recent conversations. Auto-updated on compaction.`;
+
+  // Parse existing entries by splitting on --- separators
+  const entries: string[] = [];
+  if (existing.trim()) {
+    const parts = existing.split(/\n---\n/);
+    for (const part of parts) {
+      const trimmed = part.trim();
+      // Skip the header block, keep only actual session entries
+      if (trimmed.startsWith('## Session:')) {
+        entries.push(trimmed);
+      }
+    }
+  }
+
+  entries.push(newEntry);
+
+  // Keep only the last maxEntries
+  const kept = entries.slice(-maxEntries);
+
+  return HEADER + '\n\n---\n\n' + kept.join('\n\n---\n\n') + '\n';
+}
+
+/**
+ * Load the most recent conversation summaries from the summaries directory.
+ * Returns an array of summary file contents, newest first.
+ */
+function loadRecentSummaries(conversationsDir: string, limit = 10): string[] {
+  const summariesDir = path.join(conversationsDir, 'summaries');
+  if (!fs.existsSync(summariesDir)) {
+    return [];
+  }
+
+  try {
+    const files = fs.readdirSync(summariesDir)
+      .filter(f => f.endsWith('.summary.md'))
+      .sort()
+      .reverse()
+      .slice(0, limit);
+
+    return files.map(f => {
+      try {
+        return fs.readFileSync(path.join(summariesDir, f), 'utf-8');
+      } catch {
+        return '';
+      }
+    }).filter(content => content.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function formatTranscriptMarkdown(
+  messages: ParsedMessage[],
+  metadata: TranscriptMetadata,
+  title?: string | null,
+  assistantName?: string,
+  sessionId?: string,
+): string {
   const now = new Date();
   const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
     month: 'short',
@@ -305,6 +716,22 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
   });
 
   const lines: string[] = [];
+
+  // YAML frontmatter
+  lines.push('---');
+  lines.push(`archived_at: "${now.toISOString()}"`);
+  if (sessionId) {
+    lines.push(`session_id: "${sessionId}"`);
+  }
+  lines.push(`message_count: ${metadata.messageCount}`);
+  lines.push(`has_tool_use: ${metadata.hasToolUse}`);
+  lines.push(`has_errors: ${metadata.hasErrors}`);
+  lines.push(`topics: [${metadata.topics.map(t => `"${t}"`).join(', ')}]`);
+  lines.push(`outcome: "${metadata.outcome}"`);
+  lines.push(`duration_estimate: "${metadata.durationEstimate}"`);
+  lines.push('---');
+  lines.push('');
+
   lines.push(`# ${title || 'Conversation'}`);
   lines.push('');
   lines.push(`Archived: ${formatDateTime(now)}`);
@@ -402,15 +829,45 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  injectSummaries?: boolean,
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; interruptedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(prompt);
 
-  // Poll IPC for follow-up messages and _close sentinel during the query
+  // Inject recent conversation summaries for context continuity (first query only)
+  let contextPrefix = '';
+  if (injectSummaries && !prompt.startsWith('[SCHEDULED TASK')) {
+    const summaries = loadRecentSummaries('/workspace/group/conversations', 5);
+    if (summaries.length > 0) {
+      log(`Injecting ${summaries.length} recent session summaries as context`);
+      contextPrefix = `<context type="recent-sessions">
+Here are summaries of your recent conversations for context continuity:
+
+${summaries.join('\n---\n')}
+</context>
+
+`;
+    }
+  }
+  stream.push(contextPrefix + prompt);
+
+  // Poll IPC for follow-up messages, _interrupt, and _close sentinels during the query
   let ipcPolling = true;
   let closedDuringQuery = false;
+  let interruptedDuringQuery = false;
   const pollIpcDuringQuery = () => {
     if (!ipcPolling) return;
+
+    // Check for interrupt signal (higher priority than _close)
+    if (fs.existsSync(IPC_INPUT_INTERRUPT_SENTINEL)) {
+      try { fs.unlinkSync(IPC_INPUT_INTERRUPT_SENTINEL); } catch { /* ignore */ }
+      log('Interrupt signal detected, ending current query for priority message');
+      closedDuringQuery = false;
+      interruptedDuringQuery = true;
+      stream.end();
+      ipcPolling = false;
+      return;
+    }
+
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
       closedDuringQuery = true;
@@ -550,8 +1007,8 @@ async function runQuery(
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, interruptedDuringQuery: ${interruptedDuringQuery}`);
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, interruptedDuringQuery };
 }
 
 async function main(): Promise<void> {
@@ -585,8 +1042,9 @@ async function main(): Promise<void> {
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  // Clean up stale _close sentinel from previous container runs
+  // Clean up stale sentinels from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  try { fs.unlinkSync(IPC_INPUT_INTERRUPT_SENTINEL); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
@@ -601,11 +1059,13 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let isFirstQuery = true;
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, isFirstQuery);
+      isFirstQuery = false;
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -619,6 +1079,18 @@ async function main(): Promise<void> {
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
+      }
+
+      // If interrupted, drain the priority message and start a new query immediately
+      if (queryResult.interruptedDuringQuery) {
+        log('Query was interrupted, draining interrupt message');
+        const interruptMessages = drainIpcInput();
+        if (interruptMessages.length > 0) {
+          prompt = interruptMessages.join('\n');
+          continue; // Skip waitForIpcMessage, go straight to next query
+        }
+        // If no message found (race condition), fall through to normal wait
+        log('No interrupt message found, falling through to normal wait');
       }
 
       // Emit session update so host can track it

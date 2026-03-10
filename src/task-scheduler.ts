@@ -43,6 +43,7 @@ import {
 } from './sheets-logger.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import { hooks } from './lifecycle-hooks.js';
 import { logger } from './logger.js';
 import { NotificationBatcher } from './notification-batcher.js';
 import { runPipeline } from './pipeline-runner.js';
@@ -136,6 +137,17 @@ async function runTask(
   }
 
   const startTime = Date.now();
+  try {
+    hooks.emit('task:start', {
+      taskId: task.id,
+      groupFolder: task.group_folder,
+      chatJid: task.chat_jid,
+      prompt: task.prompt,
+    });
+  } catch (hookErr) {
+    logger.warn({ err: hookErr }, 'task:start hook error');
+  }
+
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(task.group_folder);
@@ -374,6 +386,18 @@ async function runTask(
       ? result.slice(0, 200)
       : 'Completed';
   updateTaskAfterRun(task.id, nextRun, resultSummary);
+
+  try {
+    hooks.emit('task:end', {
+      taskId: task.id,
+      groupFolder: task.group_folder,
+      durationMs,
+      success: !error,
+      resultSummary,
+    });
+  } catch (hookErr) {
+    logger.warn({ err: hookErr }, 'task:end hook error');
+  }
 }
 
 let schedulerRunning = false;

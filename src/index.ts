@@ -38,6 +38,10 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { startConversationIndexer } from './conversation-indexer.js';
+import { startKnowledgeAggregator } from './knowledge-aggregator.js';
+import { loadHooksFromGroups } from './hook-loader.js';
+import { registerLearningHooks } from './learning-hooks.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -45,11 +49,24 @@ import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startRelayServer } from './ssh-relay.js';
 import { flushNotifications, startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { updateProfileFromMessages } from './user-profile.js';
 import { startWebhookServer } from './webhook-server.js';
+import { hooks } from './lifecycle-hooks.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+/**
+ * Detect messages that should interrupt a running agent session.
+ * Users prefix with !urgent, !priority, or !interrupt to signal immediacy.
+ */
+function isUrgentUserMessage(content: string): boolean {
+  if (/^!urgent\b/i.test(content)) return true;
+  if (/^!priority\b/i.test(content)) return true;
+  if (/^!interrupt\b/i.test(content)) return true;
+  return false;
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -209,6 +226,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (text) {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
+        try {
+          hooks.emit('session:output', {
+            groupFolder: group.folder,
+            chatJid,
+            text,
+            isScheduledTask: false,
+          });
+        } catch (hookErr) {
+          logger.warn({ err: hookErr }, 'session:output hook error');
+        }
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
@@ -244,6 +271,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       'Agent error, rolled back message cursor for retry',
     );
     return false;
+  }
+
+  // Update user profile with the messages that were successfully processed
+  try {
+    updateProfileFromMessages(group.folder, missedMessages);
+  } catch (err) {
+    logger.warn(
+      { group: group.name, err },
+      'Failed to update user profile',
+    );
   }
 
   return true;
@@ -297,6 +334,19 @@ async function runAgent(
       }
     : undefined;
 
+  const sessionStartTime = Date.now();
+  try {
+    hooks.emit('session:start', {
+      groupFolder: group.folder,
+      chatJid,
+      sessionId,
+      isMain,
+      isScheduledTask: false,
+    });
+  } catch (err) {
+    logger.warn({ err }, 'session:start hook error');
+  }
+
   try {
     const output = await runContainerAgent(
       group,
@@ -323,12 +373,48 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+      try {
+        hooks.emit('session:end', {
+          groupFolder: group.folder,
+          chatJid,
+          sessionId,
+          durationMs: Date.now() - sessionStartTime,
+          success: false,
+          hadOutput: false,
+        });
+      } catch (hookErr) {
+        logger.warn({ err: hookErr }, 'session:end hook error');
+      }
       return 'error';
     }
 
+    try {
+      hooks.emit('session:end', {
+        groupFolder: group.folder,
+        chatJid,
+        sessionId,
+        durationMs: Date.now() - sessionStartTime,
+        success: true,
+        hadOutput: true,
+      });
+    } catch (hookErr) {
+      logger.warn({ err: hookErr }, 'session:end hook error');
+    }
     return 'success';
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
+    try {
+      hooks.emit('session:end', {
+        groupFolder: group.folder,
+        chatJid,
+        sessionId,
+        durationMs: Date.now() - sessionStartTime,
+        success: false,
+        hadOutput: false,
+      });
+    } catch (hookErr) {
+      logger.warn({ err: hookErr }, 'session:end hook error');
+    }
     return 'error';
   }
 }
@@ -403,7 +489,24 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Check if any message is urgent and should interrupt the active query
+          const hasUrgent = messagesToSend.some((m) =>
+            isUrgentUserMessage(m.content),
+          );
+          if (hasUrgent && queue.sendInterrupt(chatJid, formatted)) {
+            logger.info(
+              { chatJid, count: messagesToSend.length },
+              'Sent priority interrupt to active container',
+            );
+            lastAgentTimestamp[chatJid] =
+              messagesToSend[messagesToSend.length - 1].timestamp;
+            saveState();
+            channel
+              .setTyping?.(chatJid, true)
+              ?.catch((err) =>
+                logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+              );
+          } else if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -458,6 +561,21 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Index conversation archives for FTS5 search
+  startConversationIndexer();
+
+  // Register learning hooks for post-session indexing and task analytics
+  registerLearningHooks();
+
+  // Load file-based hooks from groups/*/hooks/
+  const hookCount = loadHooksFromGroups();
+  if (hookCount > 0) {
+    logger.info({ hookCount }, 'File-based hooks loaded');
+  }
+
+  // Aggregate cross-group knowledge into groups/global/CLAUDE.md
+  startKnowledgeAggregator();
 
   // Start SSH relay so containers can reach Tailscale-connected VPS servers
   startRelayServer();

@@ -207,6 +207,29 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_notif_hash ON notification_log(content_hash, chat_jid, sent_at);
   `);
 
+  // Conversation FTS5 full-text search
+  database.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS conversation_fts USING fts5(
+      group_folder,
+      filename,
+      title,
+      content,
+      archived_at,
+      tokenize='porter unicode61'
+    );
+
+    CREATE TABLE IF NOT EXISTS conversation_index (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      title TEXT,
+      archived_at TEXT,
+      file_size INTEGER,
+      indexed_at TEXT NOT NULL,
+      UNIQUE(group_folder, filename)
+    );
+  `);
+
   // HubSpot sync tracking
   database.exec(`
     CREATE TABLE IF NOT EXISTS hubspot_sync_log (
@@ -1035,6 +1058,143 @@ export function getUnsyncedLeads(): Array<{ lead_id: string }> {
   `,
     )
     .all() as Array<{ lead_id: string }>;
+}
+
+// --- Conversation FTS5 search ---
+
+export interface ConversationSearchResult {
+  group_folder: string;
+  filename: string;
+  title: string;
+  archived_at: string;
+  snippet: string;
+  rank: number;
+}
+
+export interface ConversationIndexStats {
+  group_folder: string;
+  count: number;
+}
+
+/**
+ * Index a conversation into both the FTS5 table and the tracking table.
+ * Uses delete-then-insert to handle updates (FTS5 doesn't support UPDATE).
+ */
+export function indexConversation(
+  groupFolder: string,
+  filename: string,
+  title: string,
+  content: string,
+  archivedAt: string,
+  fileSize: number,
+): void {
+  const now = new Date().toISOString();
+
+  // Remove existing FTS entry if present (FTS5 requires delete + insert for updates)
+  const existing = db
+    .prepare(
+      `SELECT rowid FROM conversation_fts WHERE group_folder = ? AND filename = ?`,
+    )
+    .get(groupFolder, filename) as { rowid: number } | undefined;
+
+  if (existing) {
+    db.prepare(`DELETE FROM conversation_fts WHERE rowid = ?`).run(
+      existing.rowid,
+    );
+  }
+
+  db.prepare(
+    `INSERT INTO conversation_fts (group_folder, filename, title, content, archived_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(groupFolder, filename, title, content, archivedAt);
+
+  db.prepare(
+    `INSERT INTO conversation_index (group_folder, filename, title, archived_at, file_size, indexed_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(group_folder, filename) DO UPDATE SET
+       title = excluded.title,
+       archived_at = excluded.archived_at,
+       file_size = excluded.file_size,
+       indexed_at = excluded.indexed_at`,
+  ).run(groupFolder, filename, title, archivedAt, fileSize, now);
+}
+
+/**
+ * Search conversations using FTS5 full-text search.
+ * Returns ranked results with highlighted snippets.
+ */
+export function searchConversations(
+  query: string,
+  groupFolder?: string,
+  limit: number = 10,
+): ConversationSearchResult[] {
+  // Sanitize limit
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+
+  if (groupFolder) {
+    return db
+      .prepare(
+        `SELECT
+          group_folder,
+          filename,
+          title,
+          archived_at,
+          snippet(conversation_fts, 3, '<mark>', '</mark>', '...', 40) as snippet,
+          rank
+        FROM conversation_fts
+        WHERE conversation_fts MATCH ? AND group_folder = ?
+        ORDER BY rank
+        LIMIT ?`,
+      )
+      .all(query, groupFolder, safeLimit) as ConversationSearchResult[];
+  }
+
+  return db
+    .prepare(
+      `SELECT
+        group_folder,
+        filename,
+        title,
+        archived_at,
+        snippet(conversation_fts, 3, '<mark>', '</mark>', '...', 40) as snippet,
+        rank
+      FROM conversation_fts
+      WHERE conversation_fts MATCH ?
+      ORDER BY rank
+      LIMIT ?`,
+    )
+    .all(query, safeLimit) as ConversationSearchResult[];
+}
+
+/**
+ * Get conversation index stats per group.
+ */
+export function getConversationIndexStats(): ConversationIndexStats[] {
+  return db
+    .prepare(
+      `SELECT group_folder, COUNT(*) as count
+       FROM conversation_index
+       GROUP BY group_folder
+       ORDER BY count DESC`,
+    )
+    .all() as ConversationIndexStats[];
+}
+
+/**
+ * Check if a conversation is already indexed with the same file size.
+ * Returns true if the file is indexed and unchanged.
+ */
+export function isConversationIndexed(
+  groupFolder: string,
+  filename: string,
+  fileSize: number,
+): boolean {
+  const row = db
+    .prepare(
+      `SELECT file_size FROM conversation_index WHERE group_folder = ? AND filename = ?`,
+    )
+    .get(groupFolder, filename) as { file_size: number } | undefined;
+  return row !== undefined && row.file_size === fileSize;
 }
 
 // --- JSON migration ---

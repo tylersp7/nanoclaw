@@ -172,6 +172,38 @@ export class GroupQueue {
   }
 
   /**
+   * Send a priority interrupt to an active container.
+   * Writes a special _interrupt file to the IPC input directory,
+   * which the agent-runner treats as "end current query, start fresh with this message."
+   */
+  sendInterrupt(groupJid: string, text: string): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active || !state.groupFolder || state.isTaskContainer)
+      return false;
+    state.idleWaiting = false;
+
+    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    try {
+      fs.mkdirSync(inputDir, { recursive: true });
+
+      // Write the interrupt sentinel first (agent-runner checks this before draining messages)
+      const interruptPath = path.join(inputDir, '_interrupt');
+      fs.writeFileSync(interruptPath, '');
+
+      // Then write the message as a regular IPC input file so it's available after interrupt
+      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
+      const filepath = path.join(inputDir, filename);
+      const tempPath = `${filepath}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+      fs.renameSync(tempPath, filepath);
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Signal the active container to wind down by writing a close sentinel.
    */
   closeStdin(groupJid: string): void {

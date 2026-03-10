@@ -12,6 +12,7 @@ import {
   deleteTask,
   getRouterState,
   getTaskById,
+  searchConversations,
   setRegisteredGroup,
   setRouterState,
   updateTask,
@@ -209,6 +210,9 @@ export async function processTaskIpc(
       targetJid: string;
       description?: string;
     }>;
+    // For search_conversations
+    query?: string;
+    limit?: number;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -522,6 +526,67 @@ export async function processTaskIpc(
         path.join(webhookResultDir, resultFile),
         JSON.stringify({ secret, groupFolder: targetFolder }),
       );
+      break;
+    }
+
+    case 'search_conversations': {
+      if (!data.query) {
+        logger.warn({ sourceGroup }, 'search_conversations: missing query');
+        break;
+      }
+
+      try {
+        const results = searchConversations(
+          data.query as string,
+          (data.groupFolder as string) || undefined,
+          typeof data.limit === 'number' ? data.limit : 10,
+        );
+
+        const resultDir = path.join(
+          DATA_DIR,
+          'ipc',
+          sourceGroup,
+          'input',
+        );
+        fs.mkdirSync(resultDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(resultDir, `search-result-${Date.now()}.json`),
+          JSON.stringify({
+            type: 'search_conversations_result',
+            query: data.query,
+            results,
+            total: results.length,
+          }),
+        );
+
+        logger.info(
+          { sourceGroup, query: data.query, resultCount: results.length },
+          'Conversation search completed',
+        );
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup, query: data.query },
+          'Conversation search failed',
+        );
+
+        const resultDir = path.join(
+          DATA_DIR,
+          'ipc',
+          sourceGroup,
+          'input',
+        );
+        fs.mkdirSync(resultDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(resultDir, `search-result-${Date.now()}.json`),
+          JSON.stringify({
+            type: 'search_conversations_result',
+            query: data.query,
+            error: String(err),
+            results: [],
+            total: 0,
+          }),
+        );
+      }
       break;
     }
 
