@@ -37,8 +37,7 @@ const APPROACH_KEYWORDS =
   /\b(worked|solved|fixed|successfully|effective approach)\b/i;
 const AVOIDANCE_KEYWORDS =
   /\b(failed|error|avoid|don't|broke|caused issues)\b/i;
-const PREFERENCE_KEYWORDS =
-  /\b(prefers|always|never|likes|wants|style)\b/i;
+const PREFERENCE_KEYWORDS = /\b(prefers|always|never|likes|wants|style)\b/i;
 
 const CATEGORY_PATTERNS: {
   category: Lesson['category'];
@@ -214,7 +213,10 @@ function formatLessonLine(l: Lesson): string {
 export function saveLessons(groupFolder: string, lessons: Lesson[]): void {
   const groupDir = path.join(GROUPS_DIR, groupFolder);
   if (!fs.existsSync(groupDir)) {
-    logger.warn({ groupFolder }, 'Group directory does not exist, skipping save');
+    logger.warn(
+      { groupFolder },
+      'Group directory does not exist, skipping save',
+    );
     return;
   }
 
@@ -266,10 +268,7 @@ export function saveLessons(groupFolder: string, lessons: Lesson[]): void {
 
   const filePath = path.join(groupDir, LESSONS_FILENAME);
   fs.writeFileSync(filePath, humanReadable + jsonBlock, 'utf-8');
-  logger.info(
-    { groupFolder, lessonCount: lessons.length },
-    'Lessons saved',
-  );
+  logger.info({ groupFolder, lessonCount: lessons.length }, 'Lessons saved');
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +284,10 @@ export function updateGroupLessons(groupFolder: string): void {
   );
 
   if (!fs.existsSync(summariesDir)) {
-    logger.debug({ groupFolder }, 'No summaries directory, skipping lessons update');
+    logger.debug(
+      { groupFolder },
+      'No summaries directory, skipping lessons update',
+    );
     return;
   }
 
@@ -294,7 +296,9 @@ export function updateGroupLessons(groupFolder: string): void {
   try {
     summaryFiles = fs
       .readdirSync(summariesDir)
-      .filter((f) => f.endsWith('.md') || f.endsWith('.txt') || f.endsWith('.yaml'))
+      .filter(
+        (f) => f.endsWith('.md') || f.endsWith('.txt') || f.endsWith('.yaml'),
+      )
       .sort()
       .reverse()
       .slice(0, MAX_SUMMARIES_TO_SCAN);

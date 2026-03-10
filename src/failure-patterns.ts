@@ -279,7 +279,10 @@ function scanAllGroups(): void {
       return fs.statSync(full).isDirectory() && name !== 'global';
     });
   } catch {
-    logger.warn({ dir: GROUPS_DIR }, 'failure-patterns: cannot read groups directory');
+    logger.warn(
+      { dir: GROUPS_DIR },
+      'failure-patterns: cannot read groups directory',
+    );
     return;
   }
 
@@ -302,7 +305,10 @@ export function startFailurePatternScanner(): void {
     try {
       scanGroupFailurePatterns(event.groupFolder);
     } catch (err) {
-      logger.warn({ err, groupFolder: event.groupFolder }, 'failure-patterns: hook error');
+      logger.warn(
+        { err, groupFolder: event.groupFolder },
+        'failure-patterns: hook error',
+      );
     }
   });
 
@@ -315,9 +321,15 @@ export function startFailurePatternScanner(): void {
   }, SCAN_INTERVAL_MS);
 
   // Allow process to exit without waiting for this timer
-  if (intervalHandle && typeof intervalHandle === 'object' && 'unref' in intervalHandle) {
+  if (
+    intervalHandle &&
+    typeof intervalHandle === 'object' &&
+    'unref' in intervalHandle
+  ) {
     intervalHandle.unref();
   }
 
-  logger.info('failure-patterns: scanner started (12h interval + learning:indexed hook)');
+  logger.info(
+    'failure-patterns: scanner started (12h interval + learning:indexed hook)',
+  );
 }

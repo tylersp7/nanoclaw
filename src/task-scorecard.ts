@@ -45,7 +45,8 @@ export function recordTaskRun(
 ): void {
   const db = getDb();
   const now = new Date().toISOString();
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO task_metrics (task_id, group_folder, run_count, success_count, error_count, total_duration_ms, last_run)
     VALUES (?, ?, 1, ?, ?, ?, ?)
     ON CONFLICT(task_id) DO UPDATE SET
@@ -54,7 +55,8 @@ export function recordTaskRun(
       error_count = error_count + ?,
       total_duration_ms = total_duration_ms + ?,
       last_run = ?
-  `).run(
+  `,
+  ).run(
     taskId,
     groupFolder,
     success ? 1 : 0,
@@ -71,18 +73,22 @@ export function recordTaskRun(
 
 export function recordTaskSuppression(taskId: string): void {
   const db = getDb();
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE task_metrics SET suppressed_count = suppressed_count + 1
     WHERE task_id = ?
-  `).run(taskId);
+  `,
+  ).run(taskId);
 }
 
 export function recordTaskFollowup(taskId: string): void {
   const db = getDb();
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE task_metrics SET followup_count = followup_count + 1
     WHERE task_id = ?
-  `).run(taskId);
+  `,
+  ).run(taskId);
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +114,9 @@ const MAX_SCORECARD_BYTES = 3072; // 3 KB cap
 export function generateScorecard(groupFolder: string): void {
   const db = getDb();
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       m.task_id,
       m.group_folder,
@@ -125,7 +133,9 @@ export function generateScorecard(groupFolder: string): void {
     LEFT JOIN scheduled_tasks t ON m.task_id = t.id
     WHERE m.group_folder = ? AND m.run_count >= 3
     ORDER BY m.run_count DESC
-  `).all(groupFolder) as MetricRow[];
+  `,
+    )
+    .all(groupFolder) as MetricRow[];
 
   if (rows.length === 0) return;
 
@@ -133,7 +143,9 @@ export function generateScorecard(groupFolder: string): void {
   const scored = rows.map((r) => {
     const valueScore =
       (r.success_count - r.suppressed_count) / Math.max(r.run_count, 1);
-    const successPct = Math.round((r.success_count / Math.max(r.run_count, 1)) * 100);
+    const successPct = Math.round(
+      (r.success_count / Math.max(r.run_count, 1)) * 100,
+    );
     const suppressedPct = Math.round(
       (r.suppressed_count / Math.max(r.run_count, 1)) * 100,
     );
@@ -160,8 +172,12 @@ export function generateScorecard(groupFolder: string): void {
   // High value table
   if (highValue.length > 0) {
     lines.push('## High Value Tasks');
-    lines.push('| Task | Runs | Success% | Suppressed% | Avg Duration | Score |');
-    lines.push('|------|------|----------|-------------|--------------|-------|');
+    lines.push(
+      '| Task | Runs | Success% | Suppressed% | Avg Duration | Score |',
+    );
+    lines.push(
+      '|------|------|----------|-------------|--------------|-------|',
+    );
     for (const r of highValue) {
       const label = truncateId(r.task_id);
       lines.push(
@@ -180,7 +196,9 @@ export function generateScorecard(groupFolder: string): void {
       const label = truncateId(r.task_id);
       const lastRun = r.last_run ? r.last_run.split('T')[0] : 'n/a';
       const rec = `Pause: ${r.suppressedPct}% suppressed`;
-      lines.push(`| ${label} | ${r.run_count} | ${r.suppressedPct}% | ${lastRun} | ${rec} |`);
+      lines.push(
+        `| ${label} | ${r.run_count} | ${r.suppressedPct}% | ${lastRun} | ${rec} |`,
+      );
     }
     lines.push('');
   }
@@ -204,10 +222,7 @@ export function generateScorecard(groupFolder: string): void {
   fs.mkdirSync(groupDir, { recursive: true });
   fs.writeFileSync(path.join(groupDir, 'task-scorecard.md'), content, 'utf-8');
 
-  logger.debug(
-    { groupFolder, tasks: rows.length },
-    'Generated task scorecard',
-  );
+  logger.debug({ groupFolder, tasks: rows.length }, 'Generated task scorecard');
 }
 
 function truncateId(id: string): string {
@@ -233,7 +248,10 @@ export function startTaskScorecard(): void {
         payload.durationMs,
       );
     } catch (err) {
-      logger.error({ err, taskId: payload.taskId }, 'Failed to record task metric');
+      logger.error(
+        { err, taskId: payload.taskId },
+        'Failed to record task metric',
+      );
     }
   });
 

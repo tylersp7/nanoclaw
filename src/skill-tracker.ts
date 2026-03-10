@@ -189,7 +189,9 @@ export function scanGroupSkillUsage(
   // Post-process: compute averages and top topics
   for (const entry of stats.values()) {
     if (entry.timesUsed > 0) {
-      entry.avgMessageCount = Math.round(entry.avgMessageCount / entry.timesUsed);
+      entry.avgMessageCount = Math.round(
+        entry.avgMessageCount / entry.timesUsed,
+      );
     }
 
     const allTopics =
@@ -297,7 +299,9 @@ export function generateSkillReport(groupFolder: string): void {
     return rateB - rateA;
   });
 
-  underperforming.sort((a, b) => a.successCount / a.timesUsed - b.successCount / b.timesUsed);
+  underperforming.sort(
+    (a, b) => a.successCount / a.timesUsed - b.successCount / b.timesUsed,
+  );
 
   const unused = available.filter((a) => !usedSkillNames.has(a.name));
 
@@ -327,7 +331,9 @@ export function generateSkillReport(groupFolder: string): void {
     lines.push('|-------|------|----------|------|');
     for (const s of underperforming) {
       const pct = Math.round((s.successCount / s.timesUsed) * 100);
-      lines.push(`| ${s.skillName} | ${s.timesUsed} | ${pct}% | Low success rate |`);
+      lines.push(
+        `| ${s.skillName} | ${s.timesUsed} | ${pct}% | Low success rate |`,
+      );
     }
     lines.push('');
   }
@@ -342,8 +348,14 @@ export function generateSkillReport(groupFolder: string): void {
   }
 
   // If all sections are empty, note that
-  if (effective.length === 0 && underperforming.length === 0 && unused.length === 0) {
-    lines.push('No skill data available yet. Conversations will be analyzed as they accumulate.');
+  if (
+    effective.length === 0 &&
+    underperforming.length === 0 &&
+    unused.length === 0
+  ) {
+    lines.push(
+      'No skill data available yet. Conversations will be analyzed as they accumulate.',
+    );
     lines.push('');
   }
 
@@ -364,9 +376,15 @@ export function generateSkillReport(groupFolder: string): void {
   const outPath = path.join(GROUPS_DIR, groupFolder, 'skill-effectiveness.md');
   try {
     fs.writeFileSync(outPath, report, 'utf-8');
-    logger.info({ group: groupFolder, path: outPath }, 'Skill effectiveness report written');
+    logger.info(
+      { group: groupFolder, path: outPath },
+      'Skill effectiveness report written',
+    );
   } catch (err) {
-    logger.error({ err, group: groupFolder }, 'Failed to write skill effectiveness report');
+    logger.error(
+      { err, group: groupFolder },
+      'Failed to write skill effectiveness report',
+    );
   }
 }
 
@@ -388,7 +406,10 @@ function generateAllReports(): void {
     try {
       generateSkillReport(entry.name);
     } catch (err) {
-      logger.error({ err, group: entry.name }, 'Skill report generation failed');
+      logger.error(
+        { err, group: entry.name },
+        'Skill report generation failed',
+      );
     }
   }
 }

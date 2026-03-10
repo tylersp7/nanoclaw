@@ -47,10 +47,7 @@ import { hooks } from './lifecycle-hooks.js';
 import { logger } from './logger.js';
 import { NotificationBatcher } from './notification-batcher.js';
 import { runPipeline } from './pipeline-runner.js';
-import {
-  recordTaskSuppression,
-  recordTaskFollowup,
-} from './task-scorecard.js';
+import { recordTaskSuppression, recordTaskFollowup } from './task-scorecard.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 // --- Notification filtering helpers ---
@@ -378,7 +375,10 @@ async function runTask(
             }
           }
           // Scan for follow-up signals in output
-          const followUps = detectAndQueueFollowUps(streamedOutput.result, task);
+          const followUps = detectAndQueueFollowUps(
+            streamedOutput.result,
+            task,
+          );
           if (followUps > 0) recordTaskFollowup(task.id);
           // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
