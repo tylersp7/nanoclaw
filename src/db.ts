@@ -1207,6 +1207,11 @@ export function isConversationIndexed(
   return row !== undefined && row.file_size === fileSize;
 }
 
+/** Expose the raw database handle for modules that manage their own tables. */
+export function getDb(): Database.Database {
+  return db;
+}
+
 // --- JSON migration ---
 
 function migrateJsonState(): void {

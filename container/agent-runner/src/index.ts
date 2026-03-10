@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  secrets?: Record<string, string>;
 }
 
 interface ContainerOutput {
@@ -60,7 +61,6 @@ interface SDKUserMessage {
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const IPC_INPUT_INTERRUPT_SENTINEL = path.join(IPC_INPUT_DIR, '_interrupt');
 const IPC_POLL_MS = 500;
 
 /**
@@ -197,7 +197,7 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 
     try {
       const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const { messages, metadata } = parseTranscript(content);
+      const messages = parseTranscript(content);
 
       if (messages.length === 0) {
         log('No messages to archive');
@@ -214,49 +214,39 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const filename = `${date}-${name}.md`;
       const filePath = path.join(conversationsDir, filename);
 
-      const markdown = formatTranscriptMarkdown(messages, metadata, summary, assistantName, sessionId);
+      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
-
-      // Generate and write structured summary
-      try {
-        const summariesDir = path.join(conversationsDir, 'summaries');
-        fs.mkdirSync(summariesDir, { recursive: true });
-
-        const convSummary = generateConversationSummary(messages, metadata, summary);
-        const summaryMarkdown = formatSummaryMarkdown(convSummary);
-        const summaryFilename = `${date}-${name}.summary.md`;
-        const summaryPath = path.join(summariesDir, summaryFilename);
-        fs.writeFileSync(summaryPath, summaryMarkdown);
-
-        log(`Wrote conversation summary to ${summaryPath}`);
-
-        // Maintain rolling session context for cross-compaction continuity
-        try {
-          const contextPath = '/workspace/group/session-context.md';
-
-          let existingContext = '';
-          if (fs.existsSync(contextPath)) {
-            existingContext = fs.readFileSync(contextPath, 'utf-8');
-          }
-
-          const newEntry = formatContextEntry(convSummary, metadata);
-          const updatedContext = mergeContextEntries(existingContext, newEntry, 5);
-          fs.writeFileSync(contextPath, updatedContext);
-
-          log(`Updated session-context.md (${updatedContext.length} chars)`);
-        } catch (contextErr) {
-          log(`Failed to update session context: ${contextErr instanceof Error ? contextErr.message : String(contextErr)}`);
-        }
-      } catch (summaryErr) {
-        log(`Failed to write summary: ${summaryErr instanceof Error ? summaryErr.message : String(summaryErr)}`);
-      }
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return {};
+  };
+}
+
+// Secrets to strip from Bash tool subprocess environments.
+// These are needed by claude-code for API auth but should never
+// be visible to commands Kit runs.
+const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+
+function createSanitizeBashHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: {
+          ...(preInput.tool_input as Record<string, unknown>),
+          command: unsetPrefix + command,
+        },
+      },
+    };
   };
 }
 
@@ -273,57 +263,13 @@ function generateFallbackName(): string {
   return `conversation-${time.getHours().toString().padStart(2, '0')}${time.getMinutes().toString().padStart(2, '0')}`;
 }
 
-interface ConversationSummary {
-  title: string;
-  date: string;
-  keyFacts: string[];
-  decisions: string[];
-  actionItems: string[];
-  toolsUsed: string[];
-  errorsSummary: string | null;
-}
-
 interface ParsedMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
-interface TranscriptMetadata {
-  messageCount: number;
-  hasToolUse: boolean;
-  hasErrors: boolean;
-  topics: string[];
-  outcome: 'success' | 'error' | 'incomplete';
-  durationEstimate: 'short' | 'medium' | 'long';
-}
-
-interface ParsedTranscript {
-  messages: ParsedMessage[];
-  metadata: TranscriptMetadata;
-}
-
-/** Map tool names to human-readable topic labels. */
-const TOOL_TOPIC_MAP: Record<string, string> = {
-  Bash: 'cli',
-  Read: 'files',
-  Write: 'files',
-  Edit: 'files',
-  Glob: 'files',
-  Grep: 'search',
-  WebSearch: 'research',
-  WebFetch: 'research',
-  Task: 'orchestration',
-  TeamCreate: 'orchestration',
-  SendMessage: 'orchestration',
-  NotebookEdit: 'notebook',
-};
-
-function parseTranscript(content: string): ParsedTranscript {
+function parseTranscript(content: string): ParsedMessage[] {
   const messages: ParsedMessage[] = [];
-  let hasToolUse = false;
-  let hasErrors = false;
-  const topicCounts = new Map<string, number>();
-  let lastEntryHadError = false;
 
   for (const line of content.split('\n')) {
     if (!line.trim()) continue;
@@ -335,352 +281,20 @@ function parseTranscript(content: string): ParsedTranscript {
           : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
         if (text) messages.push({ role: 'user', content: text });
       } else if (entry.type === 'assistant' && entry.message?.content) {
-        const blocks = entry.message.content;
-        const textParts = blocks
+        const textParts = entry.message.content
           .filter((c: { type: string }) => c.type === 'text')
           .map((c: { text: string }) => c.text);
         const text = textParts.join('');
         if (text) messages.push({ role: 'assistant', content: text });
-
-        // Detect tool use and extract topics
-        for (const block of blocks) {
-          if (block.type === 'tool_use') {
-            hasToolUse = true;
-            const toolName: string = block.name || '';
-
-            // Check direct map first
-            const directTopic = TOOL_TOPIC_MAP[toolName];
-            if (directTopic) {
-              topicCounts.set(directTopic, (topicCounts.get(directTopic) || 0) + 1);
-            } else if (toolName.startsWith('mcp__nanoclaw')) {
-              topicCounts.set('ipc', (topicCounts.get('ipc') || 0) + 1);
-            } else if (toolName.startsWith('mcp__gmail')) {
-              topicCounts.set('email', (topicCounts.get('email') || 0) + 1);
-            } else if (toolName.startsWith('mcp__parallel')) {
-              topicCounts.set('research', (topicCounts.get('research') || 0) + 1);
-            }
-          }
-
-          // Detect errors in text content
-          if (block.type === 'text' && typeof block.text === 'string') {
-            if (/\bError:|Failed to |error occurred/i.test(block.text)) {
-              hasErrors = true;
-            }
-          }
-
-          // Detect errors in tool results
-          if (block.type === 'tool_result' && block.is_error) {
-            hasErrors = true;
-          }
-        }
-
-        // Track whether the last assistant entry had error signals
-        lastEntryHadError = blocks.some(
-          (b: { type: string; text?: string; is_error?: boolean }) =>
-            (b.type === 'text' && typeof b.text === 'string' && /\bError:|Failed to |error occurred/i.test(b.text)) ||
-            (b.type === 'tool_result' && b.is_error)
-        );
       }
     } catch {
     }
   }
 
-  // Build sorted topics (top 5 by frequency)
-  const topics = [...topicCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([topic]) => topic);
-
-  // Determine outcome
-  let outcome: TranscriptMetadata['outcome'] = 'incomplete';
-  if (messages.length > 0) {
-    if (lastEntryHadError || (hasErrors && messages[messages.length - 1]?.role === 'assistant')) {
-      // Check if the very last assistant message contains error signals
-      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-      if (lastAssistant && /\bError:|Failed to |error occurred/i.test(lastAssistant.content)) {
-        outcome = 'error';
-      } else {
-        outcome = 'success';
-      }
-    } else if (messages[messages.length - 1]?.role === 'assistant') {
-      outcome = 'success';
-    }
-  }
-
-  // Duration estimate based on message count
-  const msgCount = messages.length;
-  const durationEstimate: TranscriptMetadata['durationEstimate'] =
-    msgCount < 5 ? 'short' : msgCount <= 20 ? 'medium' : 'long';
-
-  return {
-    messages,
-    metadata: {
-      messageCount: msgCount,
-      hasToolUse,
-      hasErrors,
-      topics,
-      outcome,
-      durationEstimate,
-    },
-  };
+  return messages;
 }
 
-function generateConversationSummary(
-  messages: ParsedMessage[],
-  metadata: TranscriptMetadata,
-  title?: string | null,
-): ConversationSummary {
-  const date = new Date().toISOString().split('T')[0];
-
-  // Extract key facts from the last few assistant messages (conclusions live at the end)
-  const keyFacts: string[] = [];
-  const assistantMessages = messages.filter(m => m.role === 'assistant');
-  const tailMessages = assistantMessages.slice(-5);
-  const factPatterns = [
-    /(?:completed|created|updated|deleted|installed|configured|deployed|fixed|resolved|generated|wrote|built|added|removed|migrated|refactored)\s+(.{10,80})/gi,
-    /(?:successfully|done|finished|ready)\s*[:\-]?\s*(.{10,80})/gi,
-    /(?:the result|output|summary)[:\s]+(.{10,80})/gi,
-  ];
-  for (const msg of tailMessages) {
-    for (const pattern of factPatterns) {
-      pattern.lastIndex = 0;
-      const match = pattern.exec(msg.content);
-      if (match) {
-        const fact = match[0].trim().replace(/\s+/g, ' ');
-        if (fact.length <= 120 && !keyFacts.some(f => f === fact)) {
-          keyFacts.push(fact);
-        }
-      }
-    }
-    if (keyFacts.length >= 5) break;
-  }
-
-  // Extract decisions
-  const decisions: string[] = [];
-  const decisionPatterns = [
-    /(?:decided to|chose to|will use|going with|opted for|switching to|using)\s+(.{10,80})/gi,
-    /(?:let's|we'll|I'll)\s+(.{10,80})/gi,
-  ];
-  for (const msg of assistantMessages) {
-    for (const pattern of decisionPatterns) {
-      pattern.lastIndex = 0;
-      const match = pattern.exec(msg.content);
-      if (match) {
-        const decision = match[0].trim().replace(/\s+/g, ' ');
-        if (decision.length <= 120 && !decisions.some(d => d === decision)) {
-          decisions.push(decision);
-        }
-      }
-    }
-    if (decisions.length >= 5) break;
-  }
-
-  // Extract action items from the last few messages
-  const actionItems: string[] = [];
-  const actionPatterns = [
-    /(?:TODO|FIXME)[:\s]+(.{10,80})/gi,
-    /(?:follow up|next step|need to|should|needs to|remember to|don't forget to)\s+(.{10,80})/gi,
-  ];
-  const lastMessages = messages.slice(-6);
-  for (const msg of lastMessages) {
-    for (const pattern of actionPatterns) {
-      pattern.lastIndex = 0;
-      const match = pattern.exec(msg.content);
-      if (match) {
-        const item = (match[2] || match[1] || match[0]).trim().replace(/\s+/g, ' ');
-        if (item.length <= 120 && !actionItems.some(a => a === item)) {
-          actionItems.push(item);
-        }
-      }
-    }
-    if (actionItems.length >= 5) break;
-  }
-
-  // Tools used — already available as human-readable topics from metadata
-  const toolsUsed = [...metadata.topics];
-
-  // Errors summary
-  let errorsSummary: string | null = null;
-  if (metadata.hasErrors) {
-    for (const msg of messages) {
-      if (msg.role === 'assistant') {
-        const errorMatch = msg.content.match(/(?:Error:|Failed to |error occurred)[^\n]{0,100}/i);
-        if (errorMatch) {
-          errorsSummary = errorMatch[0].trim();
-          break;
-        }
-      }
-    }
-    if (!errorsSummary) {
-      errorsSummary = 'Errors detected during conversation';
-    }
-  }
-
-  return {
-    title: title || 'Conversation',
-    date,
-    keyFacts: keyFacts.slice(0, 5),
-    decisions: decisions.slice(0, 5),
-    actionItems: actionItems.slice(0, 5),
-    toolsUsed,
-    errorsSummary,
-  };
-}
-
-function formatSummaryMarkdown(summary: ConversationSummary): string {
-  const lines: string[] = [];
-
-  lines.push(`# Summary: ${summary.title}`);
-  lines.push(`Date: ${summary.date}`);
-  lines.push('');
-
-  lines.push('## Key Facts');
-  if (summary.keyFacts.length > 0) {
-    for (const fact of summary.keyFacts) {
-      lines.push(`- ${fact}`);
-    }
-  } else {
-    lines.push('- No notable facts extracted');
-  }
-  lines.push('');
-
-  lines.push('## Decisions');
-  if (summary.decisions.length > 0) {
-    for (const decision of summary.decisions) {
-      lines.push(`- ${decision}`);
-    }
-  } else {
-    lines.push('- No decisions recorded');
-  }
-  lines.push('');
-
-  lines.push('## Action Items');
-  if (summary.actionItems.length > 0) {
-    for (const item of summary.actionItems) {
-      lines.push(`- [ ] ${item}`);
-    }
-  } else {
-    lines.push('- None');
-  }
-  lines.push('');
-
-  lines.push('## Tools Used');
-  lines.push(summary.toolsUsed.length > 0 ? summary.toolsUsed.join(', ') : 'None');
-  lines.push('');
-
-  lines.push('## Errors');
-  lines.push(summary.errorsSummary || 'None');
-  lines.push('');
-
-  return lines.join('\n');
-}
-
-/**
- * Format a single session context entry from a conversation summary.
- */
-function formatContextEntry(summary: ConversationSummary, metadata: TranscriptMetadata): string {
-  const lines: string[] = [];
-
-  lines.push(`## Session: ${summary.date} — ${summary.title}`);
-  lines.push(`Outcome: ${metadata.outcome} | Messages: ${metadata.messageCount} | Topics: ${metadata.topics.join(', ') || 'general'}`);
-  lines.push('');
-
-  if (summary.keyFacts.length > 0) {
-    lines.push('**Key Facts:**');
-    for (const fact of summary.keyFacts) {
-      lines.push(`- ${fact}`);
-    }
-    lines.push('');
-  }
-
-  if (summary.decisions.length > 0) {
-    lines.push('**Decisions:**');
-    for (const decision of summary.decisions) {
-      lines.push(`- ${decision}`);
-    }
-    lines.push('');
-  }
-
-  if (summary.actionItems.length > 0) {
-    lines.push('**Action Items:**');
-    for (const item of summary.actionItems) {
-      lines.push(`- ${item}`);
-    }
-    lines.push('');
-  }
-
-  // Trim trailing blank lines and cap total length
-  let result = lines.join('\n').trimEnd();
-  if (result.length > 500) {
-    result = result.slice(0, 497) + '...';
-  }
-  return result;
-}
-
-/**
- * Merge a new context entry into the existing session-context.md content.
- * Keeps only the last `maxEntries` entries.
- */
-function mergeContextEntries(existing: string, newEntry: string, maxEntries: number): string {
-  const HEADER = `# Session Context\n\nRolling context from recent conversations. Auto-updated on compaction.`;
-
-  // Parse existing entries by splitting on --- separators
-  const entries: string[] = [];
-  if (existing.trim()) {
-    const parts = existing.split(/\n---\n/);
-    for (const part of parts) {
-      const trimmed = part.trim();
-      // Skip the header block, keep only actual session entries
-      if (trimmed.startsWith('## Session:')) {
-        entries.push(trimmed);
-      }
-    }
-  }
-
-  entries.push(newEntry);
-
-  // Keep only the last maxEntries
-  const kept = entries.slice(-maxEntries);
-
-  return HEADER + '\n\n---\n\n' + kept.join('\n\n---\n\n') + '\n';
-}
-
-/**
- * Load the most recent conversation summaries from the summaries directory.
- * Returns an array of summary file contents, newest first.
- */
-function loadRecentSummaries(conversationsDir: string, limit = 10): string[] {
-  const summariesDir = path.join(conversationsDir, 'summaries');
-  if (!fs.existsSync(summariesDir)) {
-    return [];
-  }
-
-  try {
-    const files = fs.readdirSync(summariesDir)
-      .filter(f => f.endsWith('.summary.md'))
-      .sort()
-      .reverse()
-      .slice(0, limit);
-
-    return files.map(f => {
-      try {
-        return fs.readFileSync(path.join(summariesDir, f), 'utf-8');
-      } catch {
-        return '';
-      }
-    }).filter(content => content.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-function formatTranscriptMarkdown(
-  messages: ParsedMessage[],
-  metadata: TranscriptMetadata,
-  title?: string | null,
-  assistantName?: string,
-  sessionId?: string,
-): string {
+function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
   const now = new Date();
   const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
     month: 'short',
@@ -691,22 +305,6 @@ function formatTranscriptMarkdown(
   });
 
   const lines: string[] = [];
-
-  // YAML frontmatter
-  lines.push('---');
-  lines.push(`archived_at: "${now.toISOString()}"`);
-  if (sessionId) {
-    lines.push(`session_id: "${sessionId}"`);
-  }
-  lines.push(`message_count: ${metadata.messageCount}`);
-  lines.push(`has_tool_use: ${metadata.hasToolUse}`);
-  lines.push(`has_errors: ${metadata.hasErrors}`);
-  lines.push(`topics: [${metadata.topics.map(t => `"${t}"`).join(', ')}]`);
-  lines.push(`outcome: "${metadata.outcome}"`);
-  lines.push(`duration_estimate: "${metadata.durationEstimate}"`);
-  lines.push('---');
-  lines.push('');
-
   lines.push(`# ${title || 'Conversation'}`);
   lines.push('');
   lines.push(`Archived: ${formatDateTime(now)}`);
@@ -725,6 +323,238 @@ function formatTranscriptMarkdown(
 
   return lines.join('\n');
 }
+
+// ── Pre-Session Trajectory Recall ──────────────────────────────────────
+
+interface Precedent {
+  title: string;
+  outcome: string;
+  topics: string[];
+  date: string;
+  hint: string; // brief summary of what happened
+}
+
+const STOPWORDS = new Set([
+  'the','a','an','is','are','was','were','be','been','being','have','has','had',
+  'do','does','did','will','would','could','should','may','might','shall','can',
+  'to','of','in','for','on','with','at','by','from','as','it','this','that',
+  'these','those','i','you','he','she','we','they','my','your','his','her','our',
+  'their','me','him','us','them','and','or','but','not','no','so','if','then',
+  'than','when','what','which','who','how','where','why','all','each','every',
+  'any','some','about','just','also','very','much','more','most','only','other',
+  'into','over','such','its','up','out','please','help','want','need','like',
+  'make','get','use','know',
+]);
+
+function extractSearchTerms(prompt: string): string {
+  const words = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !STOPWORDS.has(w));
+
+  // Deduplicate then take top 3 longest words (more specific)
+  const unique = [...new Set(words)];
+  unique.sort((a, b) => b.length - a.length);
+  return unique.slice(0, 3).join(' ');
+}
+
+function writeIpcTaskFile(tasksDir: string, data: object): string {
+  fs.mkdirSync(tasksDir, { recursive: true });
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const filepath = path.join(tasksDir, filename);
+  const tempPath = `${filepath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tempPath, filepath);
+  return filename;
+}
+
+function pollForIpcResponse(inputDir: string, maxWaitMs: number): unknown | null {
+  const start = Date.now();
+  const pollInterval = 100;
+
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const files = fs.readdirSync(inputDir)
+        .filter(f => f.endsWith('.json') && !f.startsWith('_'))
+        .sort();
+
+      for (const file of files) {
+        const filePath = path.join(inputDir, file);
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const data = JSON.parse(content);
+          fs.unlinkSync(filePath);
+
+          if (data.type === 'search_results' && Array.isArray(data.results)) {
+            return data;
+          }
+        } catch {
+          // Malformed file, skip
+        }
+      }
+    } catch {
+      // Dir read error, retry
+    }
+
+    // Synchronous sleep via busy-wait to avoid async complexity
+    const sleepUntil = Date.now() + pollInterval;
+    while (Date.now() < sleepUntil) {
+      // busy-wait
+    }
+  }
+
+  return null;
+}
+
+function parseYamlFrontmatter(content: string): Record<string, unknown> {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
+
+  const yaml: Record<string, unknown> = {};
+  for (const line of match[1].split('\n')) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    let value: unknown = line.slice(colonIdx + 1).trim();
+
+    // Parse arrays like [a, b, c]
+    if (typeof value === 'string' && value.startsWith('[') && value.endsWith(']')) {
+      value = value.slice(1, -1).split(',').map(s => s.trim()).filter(Boolean);
+    }
+    yaml[key] = value;
+  }
+  return yaml;
+}
+
+function extractHint(content: string): string {
+  // Get first meaningful lines after frontmatter
+  const afterFrontmatter = content.replace(/^---\n[\s\S]*?\n---\n*/, '');
+  const lines = afterFrontmatter.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#') && !l.startsWith('Archived:') && !l.startsWith('---'));
+
+  // Find first assistant response for a meaningful hint
+  for (const line of lines) {
+    if (line.startsWith('**Assistant**:') || line.startsWith('**')) {
+      const text = line.replace(/^\*\*[^*]+\*\*:\s*/, '');
+      if (text.length > 10) {
+        return text.slice(0, 180);
+      }
+    }
+  }
+
+  // Fallback: first non-empty line
+  const fallback = lines[0] || '';
+  return fallback.slice(0, 180);
+}
+
+async function findRelevantPrecedents(
+  prompt: string,
+  groupFolder: string,
+  ipcDir: string,
+): Promise<Precedent[]> {
+  const searchTerms = extractSearchTerms(prompt);
+  if (!searchTerms) {
+    log('No meaningful search terms extracted for precedent recall');
+    return [];
+  }
+
+  log(`Precedent search terms: "${searchTerms}"`);
+
+  const tasksDir = path.join(ipcDir, 'tasks');
+  const inputDir = path.join(ipcDir, 'input');
+
+  // Write search task for the host
+  writeIpcTaskFile(tasksDir, {
+    type: 'search_conversations',
+    query: searchTerms,
+    limit: 5,
+    groupFolder,
+    timestamp: new Date().toISOString(),
+  });
+
+  // Poll for response (max 3 seconds)
+  const response = pollForIpcResponse(inputDir, 3000) as {
+    results?: Array<{ title?: string; snippet?: string; date?: string; filename?: string }>;
+  } | null;
+
+  if (!response || !response.results || response.results.length === 0) {
+    log('No precedent search results received');
+    return [];
+  }
+
+  log(`Received ${response.results.length} search results`);
+
+  const precedents: Precedent[] = [];
+  const conversationsDir = '/workspace/group/conversations';
+
+  for (const result of response.results) {
+    if (!result.filename) continue;
+
+    const filePath = path.join(conversationsDir, result.filename);
+    try {
+      if (!fs.existsSync(filePath)) continue;
+
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const frontmatter = parseYamlFrontmatter(content);
+
+      const outcome = (frontmatter.outcome as string) || 'unknown';
+      const topics = Array.isArray(frontmatter.topics)
+        ? (frontmatter.topics as string[])
+        : typeof frontmatter.topics === 'string'
+          ? [frontmatter.topics]
+          : [];
+
+      // Extract date from filename (format: YYYY-MM-DD-slug.md) or result
+      const dateMatch = result.filename.match(/^(\d{4}-\d{2}-\d{2})/);
+      const date = result.date || (dateMatch ? dateMatch[1] : 'unknown');
+
+      const hint = extractHint(content);
+
+      precedents.push({
+        title: result.title || result.filename.replace(/\.md$/, ''),
+        outcome,
+        topics,
+        date,
+        hint,
+      });
+    } catch (err) {
+      log(`Failed to read precedent file ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return precedents;
+}
+
+function formatPrecedents(precedents: Precedent[]): string {
+  if (precedents.length === 0) return '';
+
+  // Prioritize diversity: 1 success + 1 failure if available, then fill up to 3
+  const successes = precedents.filter(p => p.outcome === 'success');
+  const failures = precedents.filter(p => p.outcome === 'error' || p.outcome === 'incomplete');
+  const others = precedents.filter(p => p.outcome !== 'success' && p.outcome !== 'error' && p.outcome !== 'incomplete');
+
+  const selected: Precedent[] = [];
+  if (successes.length > 0) selected.push(successes[0]);
+  if (failures.length > 0) selected.push(failures[0]);
+
+  // Fill remaining slots up to 3
+  for (const p of [...successes.slice(1), ...others, ...failures.slice(1)]) {
+    if (selected.length >= 3) break;
+    if (!selected.includes(p)) selected.push(p);
+  }
+
+  const blocks = selected.map(p => {
+    const topicsAttr = p.topics.length > 0 ? ` topics="${p.topics.join(',')}"` : '';
+    const hint = p.hint.slice(0, 200);
+    return `<precedent outcome="${p.outcome}" date="${p.date}"${topicsAttr}>\nTitle: ${p.title}\nApproach: ${hint}\n</precedent>`;
+  });
+
+  return `<context type="relevant-precedents">\n${blocks.join('\n')}\n</context>`;
+}
+
+// ── End Trajectory Recall ─────────────────────────────────────────────
 
 /**
  * Check for _close sentinel.
@@ -804,45 +634,15 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-  injectSummaries?: boolean,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; interruptedDuringQuery: boolean }> {
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
+  stream.push(prompt);
 
-  // Inject recent conversation summaries for context continuity (first query only)
-  let contextPrefix = '';
-  if (injectSummaries && !prompt.startsWith('[SCHEDULED TASK')) {
-    const summaries = loadRecentSummaries('/workspace/group/conversations', 5);
-    if (summaries.length > 0) {
-      log(`Injecting ${summaries.length} recent session summaries as context`);
-      contextPrefix = `<context type="recent-sessions">
-Here are summaries of your recent conversations for context continuity:
-
-${summaries.join('\n---\n')}
-</context>
-
-`;
-    }
-  }
-  stream.push(contextPrefix + prompt);
-
-  // Poll IPC for follow-up messages, _interrupt, and _close sentinels during the query
+  // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
   let closedDuringQuery = false;
-  let interruptedDuringQuery = false;
   const pollIpcDuringQuery = () => {
     if (!ipcPolling) return;
-
-    // Check for interrupt signal (higher priority than _close)
-    if (fs.existsSync(IPC_INPUT_INTERRUPT_SENTINEL)) {
-      try { fs.unlinkSync(IPC_INPUT_INTERRUPT_SENTINEL); } catch { /* ignore */ }
-      log('Interrupt signal detected, ending current query for priority message');
-      closedDuringQuery = false;
-      interruptedDuringQuery = true;
-      stream.end();
-      ipcPolling = false;
-      return;
-    }
-
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
       closedDuringQuery = true;
@@ -906,7 +706,6 @@ ${summaries.join('\n---\n')}
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__gmail__*',
         'mcp__parallel-search__*',
         'mcp__parallel-task__*'
       ],
@@ -923,10 +722,6 @@ ${summaries.join('\n---\n')}
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
-        },
-        gmail: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
         },
         ...(process.env.PARALLEL_API_KEY ? {
           'parallel-search': {
@@ -947,6 +742,7 @@ ${summaries.join('\n---\n')}
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
     }
   })) {
@@ -981,8 +777,8 @@ ${summaries.join('\n---\n')}
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, interruptedDuringQuery: ${interruptedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery, interruptedDuringQuery };
+  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
+  return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
 async function main(): Promise<void> {
@@ -991,6 +787,7 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
+    // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
@@ -1002,9 +799,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  // No real secrets exist in the container environment.
+  // Build SDK env: merge secrets into process.env for the SDK only.
+  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
+  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
+    sdkEnv[key] = value;
+  }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
@@ -1012,9 +812,8 @@ async function main(): Promise<void> {
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  // Clean up stale sentinels from previous container runs
+  // Clean up stale _close sentinel from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
-  try { fs.unlinkSync(IPC_INPUT_INTERRUPT_SENTINEL); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
@@ -1027,15 +826,26 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
+  // Pre-session trajectory recall: find relevant precedents for the first query
+  const ipcDir = '/workspace/ipc';
+  try {
+    const precedents = await findRelevantPrecedents(containerInput.prompt, containerInput.groupFolder, ipcDir);
+    if (precedents.length > 0) {
+      const precedentBlock = formatPrecedents(precedents);
+      log(`Injecting ${precedents.length} precedent(s) into initial prompt`);
+      prompt = `${precedentBlock}\n\n${prompt}`;
+    }
+  } catch (err) {
+    log(`Precedent recall failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
-  let isFirstQuery = true;
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, isFirstQuery);
-      isFirstQuery = false;
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -1049,18 +859,6 @@ async function main(): Promise<void> {
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
-      }
-
-      // If interrupted, drain the priority message and start a new query immediately
-      if (queryResult.interruptedDuringQuery) {
-        log('Query was interrupted, draining interrupt message');
-        const interruptMessages = drainIpcInput();
-        if (interruptMessages.length > 0) {
-          prompt = interruptMessages.join('\n');
-          continue; // Skip waitForIpcMessage, go straight to next query
-        }
-        // If no message found (race condition), fall through to normal wait
-        log('No interrupt message found, falling through to normal wait');
       }
 
       // Emit session update so host can track it

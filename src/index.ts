@@ -64,6 +64,10 @@ import { updateProfileFromMessages } from './user-profile.js';
 import { startWebhookServer } from './webhook-server.js';
 import { hooks } from './lifecycle-hooks.js';
 import { logger } from './logger.js';
+import { startFailurePatternScanner } from './failure-patterns.js';
+import { startTaskScorecard } from './task-scorecard.js';
+import { startAdaptiveLessons } from './adaptive-lessons.js';
+import { startSkillTracker } from './skill-tracker.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -591,6 +595,12 @@ async function main(): Promise<void> {
 
   // Aggregate cross-group knowledge into groups/global/CLAUDE.md
   startKnowledgeAggregator();
+
+  // V3: Active learning loop
+  startFailurePatternScanner();
+  startTaskScorecard();
+  startAdaptiveLessons();
+  startSkillTracker();
 
   // Start SSH relay so containers can reach Tailscale-connected VPS servers
   startRelayServer();
