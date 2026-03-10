@@ -70,6 +70,8 @@ import { startAdaptiveLessons } from './adaptive-lessons.js';
 import { startSkillTracker } from './skill-tracker.js';
 import { startLearningDigest } from './learning-digest.js';
 import { startQualityScorer } from './quality-scorer.js';
+import { startGoalTracker } from './goal-tracker.js';
+import { startProactiveInsights } from './proactive-insights.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -607,6 +609,10 @@ async function main(): Promise<void> {
   // V4: Agent activation & quality metrics
   startLearningDigest();
   startQualityScorer();
+
+  // V5: Intentionality & proactive behavior
+  startGoalTracker();
+  startProactiveInsights();
 
   // Start SSH relay so containers can reach Tailscale-connected VPS servers
   startRelayServer();
