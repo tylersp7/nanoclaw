@@ -68,6 +68,8 @@ import { startFailurePatternScanner } from './failure-patterns.js';
 import { startTaskScorecard } from './task-scorecard.js';
 import { startAdaptiveLessons } from './adaptive-lessons.js';
 import { startSkillTracker } from './skill-tracker.js';
+import { startLearningDigest } from './learning-digest.js';
+import { startQualityScorer } from './quality-scorer.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -601,6 +603,10 @@ async function main(): Promise<void> {
   startTaskScorecard();
   startAdaptiveLessons();
   startSkillTracker();
+
+  // V4: Agent activation & quality metrics
+  startLearningDigest();
+  startQualityScorer();
 
   // Start SSH relay so containers can reach Tailscale-connected VPS servers
   startRelayServer();
