@@ -53,14 +53,9 @@ export function indexGroupConversations(groupFolder: string): number {
   let indexed = 0;
   let files: string[];
   try {
-    files = fs
-      .readdirSync(conversationsDir)
-      .filter((f) => f.endsWith('.md'));
+    files = fs.readdirSync(conversationsDir).filter((f) => f.endsWith('.md'));
   } catch (err) {
-    logger.error(
-      { err, groupFolder },
-      'Error reading conversations directory',
-    );
+    logger.error({ err, groupFolder }, 'Error reading conversations directory');
     return 0;
   }
 
@@ -79,7 +74,14 @@ export function indexGroupConversations(groupFolder: string): number {
       const content = fs.readFileSync(filePath, 'utf-8');
       const { title, archivedAt } = parseConversationFile(filename, content);
 
-      indexConversation(groupFolder, filename, title, content, archivedAt, fileSize);
+      indexConversation(
+        groupFolder,
+        filename,
+        title,
+        content,
+        archivedAt,
+        fileSize,
+      );
       indexed++;
     } catch (err) {
       logger.error(
@@ -118,10 +120,7 @@ function indexAllConversations(): void {
 
   if (totalIndexed > 0) {
     const stats = getConversationIndexStats();
-    logger.info(
-      { totalIndexed, stats },
-      'Conversation indexing complete',
-    );
+    logger.info({ totalIndexed, stats }, 'Conversation indexing complete');
   }
 }
 

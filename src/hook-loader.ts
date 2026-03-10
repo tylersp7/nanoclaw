@@ -32,10 +32,7 @@ const VALID_EVENTS = new Set<keyof LifecycleEventMap>([
  * Interpolate template variables in a string.
  * Unknown variables are left as-is to avoid data loss.
  */
-function interpolate(
-  template: string,
-  vars: Record<string, string>,
-): string {
+function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (match, key: string) => {
     return key in vars ? vars[key] : match;
   });
@@ -151,10 +148,7 @@ function executeAction(
 /**
  * Register a single hook for a group.
  */
-export function registerHook(
-  groupFolder: string,
-  config: HookConfig,
-): void {
+export function registerHook(groupFolder: string, config: HookConfig): void {
   if (!config.enabled) return;
 
   if (!VALID_EVENTS.has(config.event)) {
@@ -194,7 +188,7 @@ export function registerHook(
 }
 
 /**
- * Scan all groups/*/hooks/*.json files, parse each as HookConfig,
+ * Scan all groups/*/ hooks; /*.json files, parse each as HookConfig,
  * and register with the lifecycle hooks system.
  * Returns the count of hooks loaded.
  */
@@ -220,14 +214,9 @@ export function loadHooksFromGroups(): number {
 
     let files: string[];
     try {
-      files = fs
-        .readdirSync(hooksDir)
-        .filter((f) => f.endsWith('.json'));
+      files = fs.readdirSync(hooksDir).filter((f) => f.endsWith('.json'));
     } catch (err) {
-      logger.warn(
-        { err, group: groupName },
-        'Failed to read hooks directory',
-      );
+      logger.warn({ err, group: groupName }, 'Failed to read hooks directory');
       continue;
     }
 
@@ -252,10 +241,7 @@ export function loadHooksFromGroups(): number {
           'Hook registered',
         );
       } catch (err) {
-        logger.warn(
-          { err, file: filePath },
-          'Failed to load hook config',
-        );
+        logger.warn({ err, file: filePath }, 'Failed to load hook config');
       }
     }
   }

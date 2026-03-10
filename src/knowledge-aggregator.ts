@@ -164,7 +164,9 @@ function buildInsights(
   const sorted = Array.from(activity.entries()).sort((a, b) => b[1] - a[1]);
   if (sorted.length > 1) {
     const top = sorted.slice(0, 3).map(([g, c]) => `${g} (${c})`);
-    insights.push(`Most active groups by conversation count: ${top.join(', ')}`);
+    insights.push(
+      `Most active groups by conversation count: ${top.join(', ')}`,
+    );
   }
 
   // Identify cross-group topics (appear in 2+ groups)
@@ -311,7 +313,10 @@ function runAggregation(): void {
  */
 export function startKnowledgeAggregator(): void {
   logger.info(
-    { delayMinutes: STARTUP_DELAY / 60000, intervalHours: AGGREGATION_INTERVAL / 3600000 },
+    {
+      delayMinutes: STARTUP_DELAY / 60000,
+      intervalHours: AGGREGATION_INTERVAL / 3600000,
+    },
     'Knowledge aggregator scheduled',
   );
 

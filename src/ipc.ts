@@ -542,12 +542,7 @@ export async function processTaskIpc(
           typeof data.limit === 'number' ? data.limit : 10,
         );
 
-        const resultDir = path.join(
-          DATA_DIR,
-          'ipc',
-          sourceGroup,
-          'input',
-        );
+        const resultDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
         fs.mkdirSync(resultDir, { recursive: true });
         fs.writeFileSync(
           path.join(resultDir, `search-result-${Date.now()}.json`),
@@ -569,12 +564,7 @@ export async function processTaskIpc(
           'Conversation search failed',
         );
 
-        const resultDir = path.join(
-          DATA_DIR,
-          'ipc',
-          sourceGroup,
-          'input',
-        );
+        const resultDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
         fs.mkdirSync(resultDir, { recursive: true });
         fs.writeFileSync(
           path.join(resultDir, `search-result-${Date.now()}.json`),

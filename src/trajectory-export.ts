@@ -180,12 +180,11 @@ function toMetadata(raw: Record<string, unknown>): TrajectoryMetadata {
   return {
     archived_at: String(raw.archived_at ?? ''),
     session_id: raw.session_id ? String(raw.session_id) : undefined,
-    message_count: typeof raw.message_count === 'number' ? raw.message_count : 0,
+    message_count:
+      typeof raw.message_count === 'number' ? raw.message_count : 0,
     has_tool_use: raw.has_tool_use === true,
     has_errors: raw.has_errors === true,
-    topics: Array.isArray(raw.topics)
-      ? raw.topics.map(String)
-      : [],
+    topics: Array.isArray(raw.topics) ? raw.topics.map(String) : [],
     outcome: String(raw.outcome ?? 'unknown'),
     duration_estimate: String(raw.duration_estimate ?? 'unknown'),
   };
@@ -231,7 +230,11 @@ function matchesFilters(
 
   if (filters.outcome && metadata.outcome !== filters.outcome) return false;
 
-  if (filters.hasToolUse !== undefined && metadata.has_tool_use !== filters.hasToolUse) return false;
+  if (
+    filters.hasToolUse !== undefined &&
+    metadata.has_tool_use !== filters.hasToolUse
+  )
+    return false;
 
   if (filters.topics && filters.topics.length > 0) {
     const has = filters.topics.some((t) =>
@@ -271,12 +274,10 @@ export function scanTrajectories(filters?: ExportFilters): TrajectoryEntry[] {
     groupFolders = [filters.groupFolder];
   } else {
     try {
-      groupFolders = fs
-        .readdirSync(GROUPS_DIR)
-        .filter((name) => {
-          const full = path.join(GROUPS_DIR, name);
-          return fs.statSync(full).isDirectory() && name !== 'global';
-        });
+      groupFolders = fs.readdirSync(GROUPS_DIR).filter((name) => {
+        const full = path.join(GROUPS_DIR, name);
+        return fs.statSync(full).isDirectory() && name !== 'global';
+      });
     } catch {
       logger.warn({ dir: GROUPS_DIR }, 'Cannot read groups directory');
       return [];
@@ -400,7 +401,9 @@ export function exportToShareGPTJSONL(
 
 // ── Stats ───────────────────────────────────────────────────────────────────
 
-export function getTrajectoryStats(entries: TrajectoryEntry[]): TrajectoryStats {
+export function getTrajectoryStats(
+  entries: TrajectoryEntry[],
+): TrajectoryStats {
   const byOutcome: Record<string, number> = {};
   const byTopic: Record<string, number> = {};
   let totalMessages = 0;
@@ -439,9 +442,9 @@ export function getTrajectoryStats(entries: TrajectoryEntry[]): TrajectoryStats 
     total: entries.length,
     byOutcome,
     byTopic,
-    dateRange:
-      earliest && latest ? { earliest, latest } : null,
-    avgMessages: entries.length > 0 ? Math.round(totalMessages / entries.length) : 0,
+    dateRange: earliest && latest ? { earliest, latest } : null,
+    avgMessages:
+      entries.length > 0 ? Math.round(totalMessages / entries.length) : 0,
     totalMessages,
     withToolUse,
     withErrors,

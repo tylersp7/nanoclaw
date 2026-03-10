@@ -277,10 +277,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   try {
     updateProfileFromMessages(group.folder, missedMessages);
   } catch (err) {
-    logger.warn(
-      { group: group.name, err },
-      'Failed to update user profile',
-    );
+    logger.warn({ group: group.name, err }, 'Failed to update user profile');
   }
 
   return true;

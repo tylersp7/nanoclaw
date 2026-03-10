@@ -80,10 +80,7 @@ export function loadUserProfile(groupFolder: string): UserProfile | null {
     }
     return JSON.parse(jsonMatch[1].trim()) as UserProfile;
   } catch (err) {
-    logger.warn(
-      { groupFolder, err },
-      'Failed to parse user-profile.md',
-    );
+    logger.warn({ groupFolder, err }, 'Failed to parse user-profile.md');
     return null;
   }
 }
@@ -278,10 +275,7 @@ const TOPIC_KEYWORDS: Record<string, string[]> = {
   content: ['blog', 'post', 'article', 'content', 'write'],
 };
 
-function updateTopicsFromContent(
-  profile: UserProfile,
-  texts: string[],
-): void {
+function updateTopicsFromContent(profile: UserProfile, texts: string[]): void {
   const topicScores = new Map<string, number>();
 
   // Seed with existing topics
