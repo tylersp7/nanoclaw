@@ -289,6 +289,14 @@ async function runTask(
     }, SCHEDULED_TASK_IDLE_TIMEOUT);
   };
 
+  const scheduleClose = () => {
+    if (closeTimer) return; // already scheduled
+    closeTimer = setTimeout(() => {
+      logger.debug({ taskId: task.id }, 'Closing task container after result');
+      deps.queue.closeStdin(queueKey);
+    }, TASK_CLOSE_DELAY_MS);
+  };
+
   try {
     const output = await runContainerAgent(
       group,
