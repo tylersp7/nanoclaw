@@ -10,7 +10,9 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
+  CONTAINER_POOL_ENABLED: false,
   CONTAINER_TIMEOUT: 1800000, // 30min
+  CREDENTIAL_PROXY_PORT: 3001,
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
@@ -48,6 +50,35 @@ vi.mock('fs', async () => {
 // Mock mount-security
 vi.mock('./mount-security.js', () => ({
   validateAdditionalMounts: vi.fn(() => []),
+}));
+
+// Mock container-pool
+vi.mock('./container-pool.js', () => ({
+  CONTAINER_POOL_ENABLED: false,
+  getContainerPool: vi.fn(() => null),
+  syncSkillsIfNeeded: vi.fn(),
+}));
+
+// Mock group-folder
+vi.mock('./group-folder.js', () => ({
+  resolveGroupFolderPath: vi.fn((folder: string) => `/tmp/nanoclaw-test-groups/${folder}`),
+  resolveGroupIpcPath: vi.fn((folder: string) => `/tmp/nanoclaw-test-groups/${folder}/ipc`),
+}));
+
+// Mock env
+vi.mock('./env.js', () => ({
+  readEnvFile: vi.fn(() => ({})),
+}));
+
+// Mock credential-proxy
+vi.mock('./credential-proxy.js', () => ({
+  detectAuthMode: vi.fn(() => 'key'),
+}));
+
+// Mock ssh-relay
+vi.mock('./ssh-relay.js', () => ({
+  getRelayUrl: vi.fn(() => undefined),
+  getRelaySecret: vi.fn(() => undefined),
 }));
 
 // Create a controllable fake ChildProcess
