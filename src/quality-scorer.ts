@@ -411,9 +411,7 @@ export function generateQualityTrends(groupFolder: string): void {
   lines.push('');
   lines.push('## Lowest Quality Conversations');
   for (const s of lowest) {
-    lines.push(
-      `- ${s.file}: ${s.score} (${s.label}) — ${primaryIssue(s)}`,
-    );
+    lines.push(`- ${s.file}: ${s.score} (${s.label}) — ${primaryIssue(s)}`);
   }
   lines.push('');
 
@@ -479,9 +477,12 @@ export function startQualityScorer(): void {
   });
 
   // First trends generation delayed 5 minutes after startup
-  setTimeout(() => {
-    scoreAllGroups();
-  }, 5 * 60 * 1000);
+  setTimeout(
+    () => {
+      scoreAllGroups();
+    },
+    5 * 60 * 1000,
+  );
 
   // Regenerate trends every 6 hours
   const SIX_HOURS = 6 * 60 * 60 * 1000;
