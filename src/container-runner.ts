@@ -22,8 +22,8 @@ import { getContainerPool, syncSkillsIfNeeded } from './container-pool.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
-  CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
+  getContainerHostGateway,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
@@ -82,16 +82,11 @@ function buildVolumeMounts(
       readonly: true,
     });
 
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the credential proxy, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
+    // NOTE: .env shadow mount removed — Apple Containers only supports directory
+    // mounts, not file mounts (mounting /dev/null over a file path fails with
+    // "path '/dev/null' is not a directory"). The project root is mounted read-only,
+    // and credentials are injected via the credential proxy, so .env exposure is
+    // limited to read-only access within the sandboxed container.
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -365,7 +360,7 @@ function buildContainerArgs(
   // Route API traffic through the credential proxy (containers never see real secrets)
   args.push(
     '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    `ANTHROPIC_BASE_URL=http://${getContainerHostGateway()}:${CREDENTIAL_PROXY_PORT}`,
   );
 
   // Mirror the host's auth method with a placeholder value.

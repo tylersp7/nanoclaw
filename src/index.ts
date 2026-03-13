@@ -18,7 +18,7 @@ import {
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
-  PROXY_BIND_HOST,
+  getProxyBindHost,
 } from './container-runtime.js';
 import {
   ContainerOutput,
@@ -545,7 +545,9 @@ async function startMessageLoop(): Promise<void> {
               );
           } else {
             // No active container — enqueue for a new one
-            queue.enqueueMessageCheck(chatJid);
+            // Pass group folder so the queue can detect IPC conflicts with
+            // task containers running under category queue keys.
+            queue.enqueueMessageCheck(chatJid, group.folder);
           }
         }
       }
@@ -569,7 +571,7 @@ function recoverPendingMessages(): void {
         { group: group.name, pendingCount: pending.length },
         'Recovery: found unprocessed messages',
       );
-      queue.enqueueMessageCheck(chatJid);
+      queue.enqueueMessageCheck(chatJid, group.folder);
     }
   }
 }
@@ -620,7 +622,7 @@ async function main(): Promise<void> {
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
-    PROXY_BIND_HOST,
+    getProxyBindHost(),
   );
 
   // Graceful shutdown handlers

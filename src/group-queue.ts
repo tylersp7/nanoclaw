@@ -34,6 +34,8 @@ export class GroupQueue {
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private shuttingDown = false;
+  /** Tracks which group folders have active containers (any queue key). */
+  private activeGroupFolders = new Map<string, string>(); // folder → queueKey
 
   private getGroup(groupJid: string): GroupState {
     let state = this.groups.get(groupJid);
@@ -59,7 +61,15 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
-  enqueueMessageCheck(groupJid: string): void {
+  /**
+   * Check if a group folder is currently in use by any container (task or message).
+   * Used to prevent IPC directory conflicts when tasks run under category keys.
+   */
+  isGroupFolderBusy(groupFolder: string): boolean {
+    return this.activeGroupFolders.has(groupFolder);
+  }
+
+  enqueueMessageCheck(groupJid: string, groupFolder?: string): void {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
@@ -67,6 +77,21 @@ export class GroupQueue {
     if (state.active) {
       state.pendingMessages = true;
       logger.debug({ groupJid }, 'Container active, message queued');
+      return;
+    }
+
+    // Prevent IPC conflicts: if a task container (under a category queue key)
+    // is using this group's folder, queue the message until the task finishes.
+    if (groupFolder && this.activeGroupFolders.has(groupFolder)) {
+      const occupiedBy = this.activeGroupFolders.get(groupFolder);
+      state.pendingMessages = true;
+      if (!this.waitingGroups.includes(groupJid)) {
+        this.waitingGroups.push(groupJid);
+      }
+      logger.info(
+        { groupJid, groupFolder, occupiedBy },
+        'Group folder busy (task container), message queued',
+      );
       return;
     }
 
@@ -138,7 +163,10 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
-    if (groupFolder) state.groupFolder = groupFolder;
+    if (groupFolder) {
+      state.groupFolder = groupFolder;
+      this.activeGroupFolders.set(groupFolder, groupJid);
+    }
   }
 
   /**
@@ -254,6 +282,7 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
+      if (state.groupFolder) this.activeGroupFolders.delete(state.groupFolder);
       state.active = false;
       state.process = null;
       state.containerName = null;
@@ -281,6 +310,7 @@ export class GroupQueue {
     } catch (err) {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
+      if (state.groupFolder) this.activeGroupFolders.delete(state.groupFolder);
       state.active = false;
       state.isTaskContainer = false;
       state.runningTaskId = null;

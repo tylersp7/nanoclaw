@@ -1,6 +1,7 @@
 import { Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -254,3 +255,12 @@ export class TelegramChannel implements Channel {
     }
   }
 }
+
+// Self-register when imported via channels/index.ts barrel
+import { registerChannel } from './registry.js';
+
+registerChannel('telegram', (opts) => {
+  const env = readEnvFile(['TELEGRAM_BOT_TOKEN']);
+  if (!env.TELEGRAM_BOT_TOKEN) return null;
+  return new TelegramChannel(env.TELEGRAM_BOT_TOKEN, opts);
+});

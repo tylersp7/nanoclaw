@@ -7,7 +7,7 @@
 
 import './slack.js'; // slack
 
-// telegram
+import './telegram.js'; // telegram
 
 // whatsapp
 import './whatsapp.js';

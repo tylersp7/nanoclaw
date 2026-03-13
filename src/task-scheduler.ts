@@ -47,6 +47,7 @@ import { hooks } from './lifecycle-hooks.js';
 import { logger } from './logger.js';
 import { NotificationBatcher } from './notification-batcher.js';
 import { runPipeline } from './pipeline-runner.js';
+import { routeTaskOutput } from './message-router.js';
 import { recordTaskSuppression, recordTaskFollowup } from './task-scorecard.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
@@ -371,7 +372,20 @@ async function runTask(
                   false,
                 ).catch(() => {});
               }
-              await deps.sendMessage(task.chat_jid, text);
+              // Route to the appropriate channel based on category and severity
+              const route = routeTaskOutput(
+                task.task_category ?? null,
+                text,
+                task.chat_jid,
+              );
+              logger.debug(
+                { taskId: task.id, route: route.reason },
+                'Routing task output',
+              );
+              await deps.sendMessage(route.primaryJid, text);
+              if (route.secondaryJid) {
+                await deps.sendMessage(route.secondaryJid, text);
+              }
             }
           }
           // Scan for follow-up signals in output
