@@ -13,6 +13,11 @@ import path from 'path';
 
 import { CONTAINER_TIMEOUT, GROUPS_DIR, IDLE_TIMEOUT } from './config.js';
 import {
+  aggregateDeltas,
+  AggregatedDelta,
+  ChangeResult,
+} from './change-detector.js';
+import {
   ContainerOutput,
   runContainerAgent,
   writeTasksSnapshot,
@@ -463,6 +468,105 @@ async function executeStep(
   }
 }
 
+// --- Delta summary parsing ---
+
+/**
+ * Regex to parse a delta summary line produced by change-detector's buildSummary.
+ * Matches lines like:
+ *   "Delta: 3 new, 1 updated, 47 unchanged (51 total)"
+ *   "51 items checked — nothing new since last run."
+ */
+const DELTA_LINE_RE =
+  /Delta:\s*(.*?)\s*\((\d+)\s*total\)/;
+
+const NOTHING_NEW_RE =
+  /(\d+)\s*items?\s*checked\s*[—–-]\s*nothing new/i;
+
+/**
+ * Parse a delta summary line from step output into a synthetic ChangeResult.
+ * Returns null if no recognizable delta line is found.
+ */
+export function parseDeltaFromOutput(
+  output: string,
+): ChangeResult | null {
+  // Try full delta line first
+  const deltaMatch = DELTA_LINE_RE.exec(output);
+  if (deltaMatch) {
+    const countsStr = deltaMatch[1];
+    const total = parseInt(deltaMatch[2], 10);
+
+    const getCount = (label: string): number => {
+      const m = new RegExp(`(\\d+)\\s+${label}`).exec(countsStr);
+      return m ? parseInt(m[1], 10) : 0;
+    };
+
+    return {
+      newItems: new Array(getCount('new')),
+      changedItems: new Array(getCount('updated')),
+      returningItems: new Array(getCount('returning')),
+      goneCount: getCount('gone'),
+      unchangedCount: getCount('unchanged'),
+      totalCurrent: total,
+      summary: deltaMatch[0],
+    };
+  }
+
+  // Try "nothing new" line
+  const nothingMatch = NOTHING_NEW_RE.exec(output);
+  if (nothingMatch) {
+    const total = parseInt(nothingMatch[1], 10);
+    return {
+      newItems: [],
+      changedItems: [],
+      returningItems: [],
+      goneCount: 0,
+      unchangedCount: total,
+      totalCurrent: total,
+      summary: nothingMatch[0],
+    };
+  }
+
+  return null;
+}
+
+/**
+ * After a pipeline completes, scan step outputs for delta summaries and
+ * aggregate them using aggregateDeltas(). Only considers steps whose names
+ * suggest they are discovery/monitor steps (contain "discover" or "monitor").
+ */
+export function buildPipelineDeltaSummary(
+  steps: PipelineStep[],
+  state: PipelineState,
+): AggregatedDelta | null {
+  const deltaResults: Record<string, ChangeResult> = {};
+
+  for (const stepIndex of state.completed_steps) {
+    const step = steps[stepIndex];
+    const output = state.step_outputs[stepIndex];
+    if (!step || !output) continue;
+
+    // Only parse deltas from discovery/monitor steps, not qualification/CRM steps
+    const name = step.name.toLowerCase();
+    const isMonitorStep =
+      name.includes('discover') ||
+      name.includes('monitor') ||
+      name.includes('scan') ||
+      name.includes('fetch') ||
+      name.includes('scrape');
+    if (!isMonitorStep) continue;
+
+    const parsed = parseDeltaFromOutput(output);
+    if (parsed) {
+      // Use step name as source key (e.g., "reddit-discover" → "reddit-discover")
+      deltaResults[step.name] = parsed;
+    }
+  }
+
+  if (Object.keys(deltaResults).length === 0) return null;
+
+  return aggregateDeltas(deltaResults);
+}
+
 /**
  * Main pipeline execution entry point.
  * Called from task-scheduler when a task has pipeline_steps.
@@ -632,15 +736,38 @@ export async function runPipeline(
 
   const totalDuration = Date.now() - startTime;
 
+  // Build unified delta summary from monitor step outputs
+  let resultSummary = state.status === 'completed'
+    ? `Pipeline completed: ${state.completed_steps.length}/${steps.length} steps`
+    : null;
+
+  const deltaSummary = buildPipelineDeltaSummary(steps, state);
+  if (deltaSummary) {
+    logger.info(
+      {
+        taskId: task.id,
+        totalNew: deltaSummary.totalNew,
+        totalChanged: deltaSummary.totalChanged,
+        totalItems: deltaSummary.totalItems,
+        sources: Object.keys(deltaSummary.bySource).length,
+      },
+      'Pipeline delta summary',
+    );
+
+    // Append delta summary to result for task history
+    if (resultSummary) {
+      resultSummary = `${resultSummary}\n${deltaSummary.summary}`;
+    } else {
+      resultSummary = deltaSummary.summary;
+    }
+  }
+
   logTaskRun({
     task_id: task.id,
     run_at: new Date().toISOString(),
     duration_ms: totalDuration,
     status: lastError ? 'error' : 'success',
-    result:
-      state.status === 'completed'
-        ? `Pipeline completed: ${state.completed_steps.length}/${steps.length} steps`
-        : null,
+    result: resultSummary,
     error: lastError,
   });
 
@@ -650,6 +777,9 @@ export async function runPipeline(
       runId: state.run_id,
       totalDuration,
       status: state.status,
+      ...(deltaSummary
+        ? { deltaSummary: deltaSummary.summary }
+        : {}),
     },
     'Pipeline finished',
   );

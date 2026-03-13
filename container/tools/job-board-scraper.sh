@@ -32,15 +32,12 @@ check_deps() {
 }
 
 # --- Configuration ---
-DEFAULT_KEYWORDS="n8n,automation,workflow,zapier alternative,make.com alternative,API integration"
+DEFAULT_KEYWORDS="n8n,automation,workflow,zapier alternative,make.com alternative,API integration,QA automation,test automation,quality assurance,vibe coding"
 MIN_BUDGET="${MIN_BUDGET:-500}"
 USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 SEEN_FILE="${SEEN_FILE:-/tmp/job-board-seen.json}"
-
-# Initialize seen file if it doesn't exist
-if [ ! -f "$SEEN_FILE" ]; then
-  echo '{}' > "$SEEN_FILE"
-fi
+WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace/group}"
+NANOCLAW_DIR="${NANOCLAW_DIR:-/workspace/project}"
 
 # --- Helper functions ---
 
@@ -79,24 +76,6 @@ truncate_text() {
   else
     echo "$text"
   fi
-}
-
-# Check if job was already seen (by URL hash)
-is_seen() {
-  local url="$1"
-  local hash
-  hash=$(echo -n "$url" | md5sum 2>/dev/null | cut -d' ' -f1 || echo "$url")
-  jq -r --arg h "$hash" '.[$h] // empty' "$SEEN_FILE" 2>/dev/null
-}
-
-# Mark job as seen
-mark_seen() {
-  local url="$1"
-  local hash
-  hash=$(echo -n "$url" | md5sum 2>/dev/null | cut -d' ' -f1 || echo "$url")
-  local tmp
-  tmp=$(mktemp)
-  jq --arg h "$hash" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '. + {($h): $t}' "$SEEN_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$SEEN_FILE"
 }
 
 # --- Platform scrapers ---
@@ -379,6 +358,8 @@ score_job() {
   echo "$text" | grep -qi 'zapier\|make\.com' && score=$((score + 1))
   echo "$text" | grep -qi 'ongoing\|long.term\|retainer' && score=$((score + 2))
   echo "$text" | grep -qi 'urgent\|asap' && score=$((score + 1))
+  echo "$text" | grep -qi 'qa\|quality assurance\|test automation\|qa engineer' && score=$((score + 2))
+  echo "$text" | grep -qi 'vibe cod\|ai cod\|cursor\|copilot' && score=$((score + 1))
 
   # Red flags
   echo "$text" | grep -qi 'data entry\|copy paste\|typing' && score=$((score - 3))
@@ -431,6 +412,36 @@ format_results() {
 
 # --- Main command handler ---
 
+# --- Change detection ---
+
+# Filter scored results through change detection, outputting only new/changed items
+apply_change_detection() {
+  local scored_json="$1"
+  local source_name="$2"
+
+  # Run change detection via Node.js
+  node -e "
+  const cd = require('$NANOCLAW_DIR/dist/change-detector.js');
+  const items = JSON.parse(process.argv[1]);
+  const detected = items.map(j => cd.jobBoardToDetectedItem({
+    id: j.url || j.title,
+    title: j.title || '',
+    description: j.description || '',
+    platform: j.platform || '$source_name',
+    ...j
+  }));
+  const delta = cd.detectChanges('$WORKSPACE_DIR', 'jobs-$source_name', detected);
+  const newIds = new Set([...delta.newItems, ...delta.changedItems].map(i => i.id));
+  const filtered = items.filter(j => {
+    const platform = j.platform || '$source_name';
+    const id = j.url || j.title;
+    return newIds.has(platform + ':' + id);
+  });
+  console.error(delta.summary);
+  console.log(JSON.stringify(filtered));
+  " "$scored_json" 2>&1
+}
+
 check_deps
 
 COMMAND="${1:-}"
@@ -441,21 +452,21 @@ case "$COMMAND" in
     echo "Searching Upwork for: $KEYWORDS" >&2
     results=$(scrape_upwork "$KEYWORDS")
     scored=$(format_results "$results" "$MIN_BUDGET")
-    echo "$scored" | jq .
+    apply_change_detection "$scored" "upwork"
     ;;
 
   fiverr)
     echo "Searching Fiverr for: $KEYWORDS" >&2
     results=$(scrape_fiverr "$KEYWORDS")
-    scored=$(format_results "$results" "0")  # Fiverr has different pricing model
-    echo "$scored" | jq .
+    scored=$(format_results "$results" "0")
+    apply_change_detection "$scored" "fiverr"
     ;;
 
   freelancer)
     echo "Searching Freelancer for: $KEYWORDS" >&2
     results=$(scrape_freelancer "$KEYWORDS")
     scored=$(format_results "$results" "$MIN_BUDGET")
-    echo "$scored" | jq .
+    apply_change_detection "$scored" "freelancer"
     ;;
 
   all)
@@ -481,7 +492,32 @@ case "$COMMAND" in
     all_results=$(echo "$all_results" | jq '[group_by(.url)[] | .[0]]')
 
     scored=$(format_results "$all_results" "$MIN_BUDGET")
-    echo "$scored" | jq .
+    apply_change_detection "$scored" "all"
+    ;;
+
+  stats)
+    node -e "
+    const cd = require('$NANOCLAW_DIR/dist/change-detector.js');
+    const stats = cd.getAllStats('$WORKSPACE_DIR');
+    const jobStats = stats.filter(s => s.source.startsWith('jobs'));
+    if (jobStats.length === 0) {
+      console.log('No change detection data yet. Run a scraper command first.');
+    } else {
+      console.log('Job board change detection stats:');
+      for (const s of jobStats) {
+        console.log(\`  \${s.source}: \${s.tracked} items tracked, last run: \${s.lastRun || 'never'}\`);
+      }
+    }
+    "
+    ;;
+
+  reset)
+    SOURCE="${2:-}"
+    node -e "
+    const cd = require('$NANOCLAW_DIR/dist/change-detector.js');
+    cd.resetState('$WORKSPACE_DIR', '$SOURCE' || undefined);
+    console.log('Change detection state reset' + ('$SOURCE' ? ' for $SOURCE' : ' (all sources)'));
+    "
     ;;
 
   *)
@@ -493,10 +529,14 @@ Commands:
   fiverr <keywords>       Search Fiverr for buyer requests/gigs
   freelancer <keywords>   Search Freelancer public API
   all <keywords>          Search all platforms
+  stats                   Show change detection statistics
+  reset [source]          Reset change detection state
 
 Keywords:
   Comma-separated list of search terms.
   Default: n8n,automation,workflow,zapier alternative,make.com alternative,API integration
+
+All commands use change detection — only new/changed jobs are reported.
 
 Environment Variables:
   MIN_BUDGET    Minimum budget filter in USD (default: 500)

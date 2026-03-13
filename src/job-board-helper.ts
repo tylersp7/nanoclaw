@@ -198,6 +198,8 @@ export function scoreJob(job: JobListing, userSkills: string[]): number {
   if (text.includes('api') || text.includes('integration')) score += 1;
   if (text.includes('vps') || text.includes('server')) score += 1;
   if (text.includes('ongoing') || text.includes('long term')) score += 2;
+  if (/\bqa\b|quality assurance|test automation|qa engineer/.test(text)) score += 2;
+  if (/vibe cod|ai cod|cursor|copilot/.test(text)) score += 1;
 
   if (text.includes('urgent') && job.budgetAmount && job.budgetAmount < 100)
     score -= 2;

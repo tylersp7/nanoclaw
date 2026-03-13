@@ -272,6 +272,8 @@ export function scoreJob(job: LinkedInJob, userSkills: string[]): number {
   if (text.includes('senior') || text.includes('lead')) score += 1;
   if (text.includes('contract') || text.includes('freelance')) score += 1;
   if (text.includes('automation') || text.includes('n8n')) score += 2;
+  if (/\bqa\b|quality assurance|test automation|qa engineer|sdet/.test(text)) score += 2;
+  if (/vibe cod|ai.?cod|cursor|copilot/.test(text)) score += 1;
 
   if (text.includes('unpaid') || text.includes('intern')) score -= 3;
 
