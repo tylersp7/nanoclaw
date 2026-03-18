@@ -28,8 +28,10 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
+import { drainGroupUsage } from './cost-tracker.js';
 import { readEnvFile } from './env.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { checkBudget, checkSoftWarning, recordRunCost } from './budget-manager.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { getRelaySecret, getRelayUrl } from './ssh-relay.js';
 import { MessageDestination, RegisteredGroup } from './types.js';
@@ -341,6 +343,7 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  groupFolder?: string,
 ): string[] {
   const args: string[] = [
     'run',
@@ -358,9 +361,13 @@ function buildContainerArgs(
   args.push('-e', `TZ=${TIMEZONE}`);
 
   // Route API traffic through the credential proxy (containers never see real secrets)
+  // Include /track/{groupFolder} prefix for per-group cost tracking
+  const trackPrefix = groupFolder
+    ? `/track/${encodeURIComponent(groupFolder)}`
+    : '';
   args.push(
     '-e',
-    `ANTHROPIC_BASE_URL=http://${getContainerHostGateway()}:${CREDENTIAL_PROXY_PORT}`,
+    `ANTHROPIC_BASE_URL=http://${getContainerHostGateway()}:${CREDENTIAL_PROXY_PORT}${trackPrefix}`,
   );
 
   // Mirror the host's auth method with a placeholder value.
@@ -411,10 +418,24 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
+  // Budget check before spawning container
+  const budgetCheck = checkBudget(group.folder);
+  if (!budgetCheck.allowed) {
+    logger.warn(
+      { group: group.name, reason: budgetCheck.reason },
+      'Container invocation blocked by budget',
+    );
+    return {
+      status: 'error',
+      result: null,
+      error: `Budget limit reached: ${budgetCheck.reason}`,
+    };
+  }
+
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group.folder);
 
   logger.debug(
     {
@@ -575,6 +596,28 @@ export async function runContainerAgent(
     container.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      // Record cost event from accumulated token usage
+      const usage = drainGroupUsage(group.folder);
+      if (usage && usage.requestCount > 0) {
+        recordRunCost({
+          group_folder: group.folder,
+          source: input.isScheduledTask ? 'scheduled_task' : 'interactive',
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
+          cache_creation_tokens: usage.cacheCreationInputTokens,
+          cache_read_tokens: usage.cacheReadInputTokens,
+          request_count: usage.requestCount,
+          cost_usd: usage.estimatedCostUsd,
+          duration_ms: duration,
+        });
+
+        // Check for soft budget warnings
+        const warning = checkSoftWarning();
+        if (warning) {
+          logger.warn({ group: group.name }, warning);
+        }
+      }
 
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');

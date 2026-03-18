@@ -476,19 +476,15 @@ async function executeStep(
  *   "Delta: 3 new, 1 updated, 47 unchanged (51 total)"
  *   "51 items checked — nothing new since last run."
  */
-const DELTA_LINE_RE =
-  /Delta:\s*(.*?)\s*\((\d+)\s*total\)/;
+const DELTA_LINE_RE = /Delta:\s*(.*?)\s*\((\d+)\s*total\)/;
 
-const NOTHING_NEW_RE =
-  /(\d+)\s*items?\s*checked\s*[—–-]\s*nothing new/i;
+const NOTHING_NEW_RE = /(\d+)\s*items?\s*checked\s*[—–-]\s*nothing new/i;
 
 /**
  * Parse a delta summary line from step output into a synthetic ChangeResult.
  * Returns null if no recognizable delta line is found.
  */
-export function parseDeltaFromOutput(
-  output: string,
-): ChangeResult | null {
+export function parseDeltaFromOutput(output: string): ChangeResult | null {
   // Try full delta line first
   const deltaMatch = DELTA_LINE_RE.exec(output);
   if (deltaMatch) {
@@ -737,9 +733,10 @@ export async function runPipeline(
   const totalDuration = Date.now() - startTime;
 
   // Build unified delta summary from monitor step outputs
-  let resultSummary = state.status === 'completed'
-    ? `Pipeline completed: ${state.completed_steps.length}/${steps.length} steps`
-    : null;
+  let resultSummary =
+    state.status === 'completed'
+      ? `Pipeline completed: ${state.completed_steps.length}/${steps.length} steps`
+      : null;
 
   const deltaSummary = buildPipelineDeltaSummary(steps, state);
   if (deltaSummary) {
@@ -777,9 +774,7 @@ export async function runPipeline(
       runId: state.run_id,
       totalDuration,
       status: state.status,
-      ...(deltaSummary
-        ? { deltaSummary: deltaSummary.summary }
-        : {}),
+      ...(deltaSummary ? { deltaSummary: deltaSummary.summary } : {}),
     },
     'Pipeline finished',
   );

@@ -166,7 +166,8 @@ export function parseJobListing(
   if (text.includes('contract') || text.includes('freelance')) score += 2;
   if (text.includes('automation') || text.includes('workflow')) score += 1;
   if (text.includes('senior') || text.includes('lead')) score += 1;
-  if (/\bqa\b|quality assurance|test automation|qa engineer|sdet/.test(text)) score += 2;
+  if (/\bqa\b|quality assurance|test automation|qa engineer|sdet/.test(text))
+    score += 2;
   if (/vibe cod|ai.?cod|cursor|copilot/.test(text)) score += 1;
 
   score += Math.min(matchedKeywords.length, 3);

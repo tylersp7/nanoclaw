@@ -124,6 +124,24 @@ export const SHEETS_SPREADSHEET_ID =
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// Budget defaults (can be overridden via setBudgetConfig)
+export const DEFAULT_DAILY_BUDGET_USD = parseFloat(
+  process.env.DAILY_BUDGET_USD || '10',
+);
+export const DEFAULT_MONTHLY_BUDGET_USD = parseFloat(
+  process.env.MONTHLY_BUDGET_USD || '200',
+);
+export const BUDGET_SOFT_WARNING_PERCENT = parseInt(
+  process.env.BUDGET_SOFT_WARNING_PERCENT || '80',
+  10,
+);
+
+// Orphan reaper interval (how often to check for stuck containers)
+export const ORPHAN_REAP_INTERVAL_MS = parseInt(
+  process.env.ORPHAN_REAP_INTERVAL_MS || '300000',
+  10,
+); // 5 min default
+
 // Telegram channel
 export const TELEGRAM_BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';

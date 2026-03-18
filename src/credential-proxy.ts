@@ -9,11 +9,23 @@
  *             API key via /api/oauth/claude_cli/create_api_key.
  *             Proxy injects real OAuth token on that exchange request;
  *             subsequent requests carry the temp key which is valid as-is.
+ *
+ * Cost tracking:
+ *   Containers set ANTHROPIC_BASE_URL to http://host:port/track/{groupFolder}
+ *   The proxy strips the /track/{groupFolder} prefix, forwards upstream,
+ *   then parses the response to extract token usage for per-group cost tracking.
  */
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
+import { PassThrough } from 'stream';
 
+import {
+  extractGroupFromPath,
+  parseNonStreamingUsage,
+  parseStreamingUsage,
+  recordTokenUsage,
+} from './cost-tracker.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
@@ -50,6 +62,17 @@ export function startCredentialProxy(
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
         const body = Buffer.concat(chunks);
+
+        // Extract group folder from /track/{groupFolder}/... path prefix
+        let groupFolder: string | null = null;
+        let upstreamPath = req.url || '/';
+
+        const trackInfo = extractGroupFromPath(upstreamPath);
+        if (trackInfo) {
+          groupFolder = trackInfo.groupFolder;
+          upstreamPath = trackInfo.strippedPath;
+        }
+
         const headers: Record<string, string | number | string[] | undefined> =
           {
             ...(req.headers as Record<string, string>),
@@ -79,17 +102,58 @@ export function startCredentialProxy(
           }
         }
 
+        // Determine if this is a messages endpoint (for token tracking)
+        const isMessagesEndpoint = upstreamPath.includes('/v1/messages');
+
         const upstream = makeRequest(
           {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
+            path: upstreamPath,
             method: req.method,
             headers,
           } as RequestOptions,
           (upRes) => {
             res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
+
+            if (isMessagesEndpoint && groupFolder && upRes.statusCode === 200) {
+              // Tap into the response stream to extract token usage
+              const responseChunks: Buffer[] = [];
+              const isStreaming =
+                upRes.headers['content-type']?.includes('text/event-stream') ??
+                false;
+
+              const passThrough = new PassThrough();
+              upRes.pipe(passThrough);
+              passThrough.pipe(res);
+
+              passThrough.on('data', (chunk: Buffer) => {
+                responseChunks.push(chunk);
+              });
+
+              passThrough.on('end', () => {
+                try {
+                  const responseBody = Buffer.concat(responseChunks).toString(
+                    'utf-8',
+                  );
+                  const usage = isStreaming
+                    ? parseStreamingUsage(responseBody)
+                    : parseNonStreamingUsage(responseBody);
+
+                  if (usage && groupFolder) {
+                    recordTokenUsage(groupFolder, usage);
+                  }
+                } catch (err) {
+                  logger.debug(
+                    { err, groupFolder },
+                    'Failed to parse token usage from response',
+                  );
+                }
+              });
+            } else {
+              // Non-tracked requests: pipe directly
+              upRes.pipe(res);
+            }
           },
         );
 

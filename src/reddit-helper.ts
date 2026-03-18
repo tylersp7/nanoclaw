@@ -349,7 +349,8 @@ export function scorePost(post: RedditPost, userSkills: string[]): number {
   if (text.includes('budget') && !text.includes('low budget')) score += 1;
   if (text.includes('long term') || text.includes('ongoing')) score += 2;
   if (text.includes('experienced') || text.includes('expert')) score += 1;
-  if (/\bqa\b|quality assurance|test automation|qa engineer|sdet/.test(text)) score += 2;
+  if (/\bqa\b|quality assurance|test automation|qa engineer|sdet/.test(text))
+    score += 2;
   if (/vibe cod|ai.?cod|cursor|copilot/.test(text)) score += 1;
 
   const skillMatches = userSkills.filter((skill) =>

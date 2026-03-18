@@ -21,3 +21,9 @@ echo "Image: ${IMAGE_NAME}:${TAG}"
 echo ""
 echo "Test with:"
 echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | ${CONTAINER_RUNTIME} run -i ${IMAGE_NAME}:${TAG}"
+
+# Stop the builder to reclaim RAM (~3GB) — it auto-starts on next build
+if [ "$CONTAINER_RUNTIME" = "container" ]; then
+  echo "Stopping builder to free memory..."
+  container builder stop 2>/dev/null || true
+fi

@@ -64,6 +64,9 @@ import { updateProfileFromMessages } from './user-profile.js';
 import { startWebhookServer } from './webhook-server.js';
 import { hooks } from './lifecycle-hooks.js';
 import { logger } from './logger.js';
+import { initAdapters } from './agent-adapter.js';
+import { startOrphanReaper } from './orphan-reaper.js';
+import { reconcileServices, stopAllServices } from './runtime-services.js';
 import { startFailurePatternScanner } from './failure-patterns.js';
 import { startTaskScorecard } from './task-scorecard.js';
 import { startAdaptiveLessons } from './adaptive-lessons.js';
@@ -616,6 +619,12 @@ async function main(): Promise<void> {
   startGoalTracker();
   startProactiveInsights();
 
+  // Initialize agent adapter system (default: Claude container adapter)
+  initAdapters();
+
+  // Reconcile runtime services from previous run (mark stale as stopped)
+  reconcileServices();
+
   // Start SSH relay so containers can reach Tailscale-connected VPS servers
   startRelayServer();
 
@@ -625,10 +634,14 @@ async function main(): Promise<void> {
     getProxyBindHost(),
   );
 
+  // Start orphan reaper (detect and clean up stuck/untracked containers)
+  startOrphanReaper(() => queue.getTrackedContainerNames());
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await flushNotifications();
+    stopAllServices();
     proxyServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();

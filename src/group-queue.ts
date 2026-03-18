@@ -406,6 +406,20 @@ export class GroupQueue {
     }
   }
 
+  /**
+   * Get the set of container names currently tracked by the queue.
+   * Used by the orphan reaper to identify untracked containers.
+   */
+  getTrackedContainerNames(): Set<string> {
+    const names = new Set<string>();
+    for (const [, state] of this.groups) {
+      if (state.containerName && state.active) {
+        names.add(state.containerName);
+      }
+    }
+    return names;
+  }
+
   async shutdown(_gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 

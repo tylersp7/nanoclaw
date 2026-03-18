@@ -646,6 +646,34 @@ export async function processTaskIpc(
       break;
     }
 
+    case 'budget_status': {
+      try {
+        const { getBudgetSummary, checkBudget } = await import(
+          './budget-manager.js'
+        );
+        const summary = getBudgetSummary();
+        const check = checkBudget();
+
+        const resultDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'input');
+        fs.mkdirSync(resultDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(resultDir, `budget-result-${Date.now()}.json`),
+          JSON.stringify({
+            type: 'budget_status_result',
+            summary,
+            allowed: check.allowed,
+            dailyPercent: check.dailyPercent,
+            monthlyPercent: check.monthlyPercent,
+          }),
+        );
+
+        logger.info({ sourceGroup }, 'Budget status queried via IPC');
+      } catch (err) {
+        logger.error({ err, sourceGroup }, 'Budget status IPC error');
+      }
+      break;
+    }
+
     default: {
       const handled = await handleXIpc(data, sourceGroup, isMain);
       if (!handled) {

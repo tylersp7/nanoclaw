@@ -230,6 +230,26 @@ function createSchema(database: Database.Database): void {
     );
   `);
 
+  // Cost events tracking (API token usage per container run)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS cost_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      source TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      duration_ms INTEGER,
+      task_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cost_events_date ON cost_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_cost_events_group ON cost_events(group_folder, created_at);
+  `);
+
   // HubSpot sync tracking
   database.exec(`
     CREATE TABLE IF NOT EXISTS hubspot_sync_log (
@@ -1068,6 +1088,122 @@ export function getUnsyncedLeads(): Array<{ lead_id: string }> {
   `,
     )
     .all() as Array<{ lead_id: string }>;
+}
+
+// --- Cost tracking ---
+
+export interface CostEvent {
+  id?: number;
+  group_folder: string;
+  source: string; // 'interactive' | 'scheduled_task' | 'pipeline_step' | 'follow_up'
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  request_count: number;
+  cost_usd: number;
+  duration_ms?: number;
+  task_id?: string;
+  created_at?: string;
+}
+
+export function logCostEvent(event: Omit<CostEvent, 'id' | 'created_at'>): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO cost_events (group_folder, source, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, request_count, cost_usd, duration_ms, task_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    event.group_folder,
+    event.source,
+    event.input_tokens,
+    event.output_tokens,
+    event.cache_creation_tokens,
+    event.cache_read_tokens,
+    event.request_count,
+    event.cost_usd,
+    event.duration_ms || null,
+    event.task_id || null,
+    now,
+  );
+}
+
+export function getCostSummary(): {
+  dailyCostUsd: number;
+  monthlyCostUsd: number;
+  dailyRequests: number;
+  monthlyRequests: number;
+  topGroups: Array<{ group_folder: string; cost_usd: number }>;
+} {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
+
+  const daily = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) as cost, COALESCE(SUM(request_count), 0) as reqs
+       FROM cost_events WHERE created_at >= ?`,
+    )
+    .get(today + 'T00:00:00.000Z') as { cost: number; reqs: number };
+
+  const monthly = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) as cost, COALESCE(SUM(request_count), 0) as reqs
+       FROM cost_events WHERE created_at >= ?`,
+    )
+    .get(monthStart + 'T00:00:00.000Z') as { cost: number; reqs: number };
+
+  const topGroups = db
+    .prepare(
+      `SELECT group_folder, SUM(cost_usd) as cost_usd
+       FROM cost_events WHERE created_at >= ?
+       GROUP BY group_folder ORDER BY cost_usd DESC LIMIT 10`,
+    )
+    .all(monthStart + 'T00:00:00.000Z') as Array<{
+    group_folder: string;
+    cost_usd: number;
+  }>;
+
+  return {
+    dailyCostUsd: daily.cost,
+    monthlyCostUsd: monthly.cost,
+    dailyRequests: daily.reqs,
+    monthlyRequests: monthly.reqs,
+    topGroups,
+  };
+}
+
+export function getCostHistory(
+  days: number = 30,
+): Array<{
+  date: string;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  request_count: number;
+}> {
+  const since = new Date(
+    Date.now() - days * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  return db
+    .prepare(
+      `SELECT
+         substr(created_at, 1, 10) as date,
+         SUM(cost_usd) as cost_usd,
+         SUM(input_tokens) as input_tokens,
+         SUM(output_tokens) as output_tokens,
+         SUM(request_count) as request_count
+       FROM cost_events
+       WHERE created_at >= ?
+       GROUP BY date
+       ORDER BY date`,
+    )
+    .all(since) as Array<{
+    date: string;
+    cost_usd: number;
+    input_tokens: number;
+    output_tokens: number;
+    request_count: number;
+  }>;
 }
 
 // --- Conversation FTS5 search ---

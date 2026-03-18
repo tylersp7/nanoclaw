@@ -328,7 +328,9 @@ export function linkedinToDetectedItem(job: {
 }): DetectedItem {
   return {
     id: `linkedin:${job.id}`,
-    contentHash: hashContent(`${job.title}\n${job.company}\n${job.description}`),
+    contentHash: hashContent(
+      `${job.title}\n${job.company}\n${job.description}`,
+    ),
     data: job as Record<string, unknown>,
   };
 }
@@ -485,10 +487,10 @@ export function deduplicateAcrossSources(
   currentSource: string,
   otherSources: string[],
 ): ChangeResult {
-  const duplicateIds = findCrossPlatformDuplicates(
-    workspaceDir,
-    [...otherSources, currentSource],
-  );
+  const duplicateIds = findCrossPlatformDuplicates(workspaceDir, [
+    ...otherSources,
+    currentSource,
+  ]);
 
   // Only filter items from the current source that are dupes of other sources
   const filterDupes = (items: DetectedItem[]) =>
