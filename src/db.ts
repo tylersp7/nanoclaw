@@ -1107,7 +1107,9 @@ export interface CostEvent {
   created_at?: string;
 }
 
-export function logCostEvent(event: Omit<CostEvent, 'id' | 'created_at'>): void {
+export function logCostEvent(
+  event: Omit<CostEvent, 'id' | 'created_at'>,
+): void {
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO cost_events (group_folder, source, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, request_count, cost_usd, duration_ms, task_id, created_at)
@@ -1171,18 +1173,14 @@ export function getCostSummary(): {
   };
 }
 
-export function getCostHistory(
-  days: number = 30,
-): Array<{
+export function getCostHistory(days: number = 30): Array<{
   date: string;
   cost_usd: number;
   input_tokens: number;
   output_tokens: number;
   request_count: number;
 }> {
-  const since = new Date(
-    Date.now() - days * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
   return db
     .prepare(

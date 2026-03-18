@@ -140,10 +140,7 @@ export function checkSoftWarning(): string | null {
   const today = new Date().toISOString().slice(0, 10);
   const thisMonth = today.slice(0, 7);
 
-  if (
-    dailyPercent >= config.softWarningPercent &&
-    lastDailyWarn !== today
-  ) {
+  if (dailyPercent >= config.softWarningPercent && lastDailyWarn !== today) {
     setRouterState('budget_daily_warn_date', today);
     return `Budget warning: Daily spend at ${dailyPercent.toFixed(0)}% ($${summary.dailyCostUsd.toFixed(2)} / $${config.dailyLimitUsd.toFixed(2)})`;
   }
@@ -162,7 +159,9 @@ export function checkSoftWarning(): string | null {
 /**
  * Record a cost event after a container run completes.
  */
-export function recordRunCost(event: Omit<CostEvent, 'id' | 'created_at'>): void {
+export function recordRunCost(
+  event: Omit<CostEvent, 'id' | 'created_at'>,
+): void {
   logCostEvent(event);
 
   logger.info(

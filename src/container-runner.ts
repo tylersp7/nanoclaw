@@ -31,7 +31,11 @@ import {
 import { drainGroupUsage } from './cost-tracker.js';
 import { readEnvFile } from './env.js';
 import { detectAuthMode } from './credential-proxy.js';
-import { checkBudget, checkSoftWarning, recordRunCost } from './budget-manager.js';
+import {
+  checkBudget,
+  checkSoftWarning,
+  recordRunCost,
+} from './budget-manager.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { getRelaySecret, getRelayUrl } from './ssh-relay.js';
 import { MessageDestination, RegisteredGroup } from './types.js';

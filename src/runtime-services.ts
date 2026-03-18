@@ -172,8 +172,7 @@ export function releaseService(key: string, leaseId: string): void {
   );
 
   if (service.leases.size === 0 && service.status === 'running') {
-    const idleMs =
-      service.config.idleTimeoutMs || DEFAULT_IDLE_TIMEOUT_MS;
+    const idleMs = service.config.idleTimeoutMs || DEFAULT_IDLE_TIMEOUT_MS;
     service.idleTimer = setTimeout(() => {
       stopService(key);
     }, idleMs);
@@ -272,10 +271,7 @@ export function reconcileServices(): void {
 
 // --- Internal helpers ---
 
-async function waitForReadiness(
-  url: string,
-  timeoutMs: number,
-): Promise<void> {
+async function waitForReadiness(url: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const { request } = await import('http');
 
@@ -316,7 +312,9 @@ async function waitForStatus(
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error(`Timeout waiting for service ${key} to reach status ${status}`);
+  throw new Error(
+    `Timeout waiting for service ${key} to reach status ${status}`,
+  );
 }
 
 function persistServiceState(): void {

@@ -50,8 +50,7 @@ function listRunningContainers(): ContainerInfo[] {
     return containers
       .filter(
         (c) =>
-          c.status === 'running' &&
-          c.configuration.id.startsWith('nanoclaw-'),
+          c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'),
       )
       .map((c) => {
         const created = c.created ? new Date(c.created).getTime() : 0;
@@ -117,10 +116,7 @@ export function reapOrphans(
   }
 
   if (reaped > 0) {
-    logger.info(
-      { reaped, total: running.length },
-      'Orphan reaper completed',
-    );
+    logger.info({ reaped, total: running.length }, 'Orphan reaper completed');
   }
 
   return reaped;

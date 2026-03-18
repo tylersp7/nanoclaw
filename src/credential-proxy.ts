@@ -133,9 +133,8 @@ export function startCredentialProxy(
 
               passThrough.on('end', () => {
                 try {
-                  const responseBody = Buffer.concat(responseChunks).toString(
-                    'utf-8',
-                  );
+                  const responseBody =
+                    Buffer.concat(responseChunks).toString('utf-8');
                   const usage = isStreaming
                     ? parseStreamingUsage(responseBody)
                     : parseNonStreamingUsage(responseBody);

@@ -648,9 +648,8 @@ export async function processTaskIpc(
 
     case 'budget_status': {
       try {
-        const { getBudgetSummary, checkBudget } = await import(
-          './budget-manager.js'
-        );
+        const { getBudgetSummary, checkBudget } =
+          await import('./budget-manager.js');
         const summary = getBudgetSummary();
         const check = checkBudget();
 

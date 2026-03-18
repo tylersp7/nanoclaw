@@ -73,10 +73,7 @@ function estimateCost(usage: TokenUsage): number {
  * Record token usage for a group. Called by the credential proxy
  * after parsing an API response.
  */
-export function recordTokenUsage(
-  groupFolder: string,
-  usage: TokenUsage,
-): void {
+export function recordTokenUsage(groupFolder: string, usage: TokenUsage): void {
   const acc = getOrCreateAccumulator(groupFolder);
   acc.inputTokens += usage.inputTokens;
   acc.outputTokens += usage.outputTokens;
@@ -119,9 +116,7 @@ export function drainGroupUsage(groupFolder: string): AccumulatedUsage | null {
 /**
  * Parse token usage from a non-streaming Anthropic API response body.
  */
-export function parseNonStreamingUsage(
-  body: string,
-): TokenUsage | null {
+export function parseNonStreamingUsage(body: string): TokenUsage | null {
   try {
     const json = JSON.parse(body);
     if (!json.usage) return null;
@@ -162,8 +157,7 @@ export function parseStreamingUsage(body: string): TokenUsage | null {
         inputTokens = event.message.usage.input_tokens || 0;
         cacheCreationInputTokens =
           event.message.usage.cache_creation_input_tokens || 0;
-        cacheReadInputTokens =
-          event.message.usage.cache_read_input_tokens || 0;
+        cacheReadInputTokens = event.message.usage.cache_read_input_tokens || 0;
         model = event.message.model || model;
       }
 
