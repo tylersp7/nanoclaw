@@ -42,7 +42,7 @@
     "rss-parser": "^3.13.0",
     "snoowrap": "^1.23.0",
     "ssh2": "^1.17.0",
-    "yaml": "^2.8.2",
+    "yaml": "^2.8.3",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
